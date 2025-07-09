@@ -22,7 +22,7 @@ def read_roles(session: SessionDep, skip: int = 0, limit: int = 100) -> Any:
     count_statement = select(func.count()).select_from(Role)
     count = session.exec(count_statement).one()
 
-    roles = crud.get_roles(session, skip=skip, limit=limit)
+    roles = crud.get_roles(session=session, skip=skip, limit=limit)
     return RolesPublic(data=roles, count=count)
 
 
@@ -35,7 +35,7 @@ def read_role(role_id: UUID, session: SessionDep) -> Any:
     """
     Get a role by ID (superuser only).
     """
-    role = crud.get_role(session, role_id)
+    role = crud.get_role(session=session, role_id=role_id)
     if not role:
         raise HTTPException(status_code=404, detail="Role không tồn tại")
     return role
@@ -47,11 +47,11 @@ def read_role(role_id: UUID, session: SessionDep) -> Any:
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(get_current_active_superuser)],
 )
-def create_role(*, session: SessionDep, role_in: RoleCreate) -> Any:
+def create_role_api(*, session: SessionDep, role_in: RoleCreate) -> Any:
     """
     Create a new role (superuser only).
     """
-    return crud.create_role(session, role_in)
+    return crud.create_role(session=session, role_in=role_in)
 
 
 @router.put(
@@ -68,10 +68,10 @@ def update_role(
     """
     Update a role (superuser only).
     """
-    db_role = crud.get_role(session, role_id)
+    db_role = crud.get_role(session=session, role_id=role_id)
     if not db_role:
         raise HTTPException(status_code=404, detail="Role không tồn tại")
-    return crud.update_role(session, db_role, role_in)
+    return crud.update_role(session=session, db_role=db_role, role_in=role_in)
 
 
 @router.delete(
@@ -83,7 +83,7 @@ def delete_role(*, role_id: UUID, session: SessionDep) -> None:
     """
     Delete a role (superuser only).
     """
-    db_role = crud.get_role(session, role_id)
+    db_role = crud.get_role(session =session, role_id =role_id)
     if not db_role:
         raise HTTPException(status_code=404, detail="Role không tồn tại")
-    crud.delete_role(session, db_role)
+    crud.delete_role(session=session, db_role=db_role)

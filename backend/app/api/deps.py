@@ -67,6 +67,10 @@ def get_current_user_role_in_project(
     session: SessionDep,
     current_user: CurrentUser
 ) -> Tuple[User, UUID, int]:  # User, role_id, rank
+    
+    if current_user.is_superuser:
+        return current_user, project_id, 1
+    
     result = session.exec(
         select(UserProjectRole.role_id, Role.rank)
         .join(Role, Role.id == UserProjectRole.role_id)
@@ -82,7 +86,7 @@ def get_current_user_role_in_project(
             detail="Bạn không có quyền truy cập dự án này.",
         )
 
-    role_id, rank = result
+    rank = result
     return current_user, project_id, rank
 
 ProjectAccessInfo = Annotated[Tuple[User, UUID, int], Depends(get_current_user_role_in_project)]
@@ -90,11 +94,15 @@ ProjectAccessInfo = Annotated[Tuple[User, UUID, int], Depends(get_current_user_r
 # ================== Rank Check Middleware ==================
 def verify_rank_in_project(min_rank: int):
     def checker(info: ProjectAccessInfo) -> Tuple[User, UUID, int]:
-        current_user, role_id, rank = info
+        current_user, project_id, rank = info
+
+        if current_user.is_superuser:
+            return current_user, project_id, rank
+        
         if rank > min_rank:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Bạn cần quyền có rank <= {min_rank} để thực hiện hành động này.",
             )
-        return current_user, role_id, rank
+        return current_user, project_id, rank
     return checker

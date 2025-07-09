@@ -34,9 +34,9 @@ def read_projects(
     if current_user.is_superuser:
         count_stmt = select(func.count()).select_from(ProjectList)
         count = session.exec(count_stmt).one()
-        projects = crud.get_all_project_lists(session, skip=skip, limit=limit)
+        projects = crud.get_all_project_lists(session=session, skip=skip, limit=limit)
     else:
-        projects, count = crud.get_accessible_project_lists(session, user_id=current_user.id, skip=skip, limit=limit)
+        projects, count = crud.get_all_project_lists(session, user_id=current_user.id, skip=skip, limit=limit)
 
     return ProjectsPublic(data=projects, count=count)
 
@@ -53,7 +53,7 @@ def create_project(
     """
     if not current_user.is_superuser:
         raise HTTPException(status_code=403, detail="Chỉ admin hệ thống mới được tạo project.")
-    return crud.create_project_list(db=session, project_in=project_in)
+    return crud.create_project_list(session=session, project_in=project_in)
 
 
 @router.put(
@@ -70,11 +70,11 @@ def update_project(
     """
     Update an existing project (rank <= 2 or superuser).
     """
-    db_project = crud.get_project_list(db=session, project_id=project_id)
+    db_project = crud.get_project_list(session=session, project_id=project_id)
     if not db_project:
         raise HTTPException(status_code=404, detail="Project không tồn tại")
 
-    return crud.update_project_list(db=session, db_project=db_project, project_update=project_in)
+    return crud.update_project_list(session=session, db_project=db_project, project_in=project_in)
 
 
 @router.delete(
@@ -90,8 +90,8 @@ def delete_project(
     """
     Delete a project (rank <= 2 or superuser).
     """
-    db_project = crud.get_project_list(db=session, project_id=project_id)
+    db_project = crud.get_project_list(session=session, project_id=project_id)
     if not db_project:
         raise HTTPException(status_code=404, detail="Project không tồn tại")
 
-    crud.delete_project_list(db=session, db_project=db_project)
+    crud.delete_project_list(session=session, db_project=db_project)

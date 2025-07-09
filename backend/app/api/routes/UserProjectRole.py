@@ -33,7 +33,7 @@ def read_user_project_roles(
 ) -> Any:
     current_user, _, current_rank = info
 
-    user_roles = crud.get_project_users_roles(session, project_id=project_id)
+    user_roles = crud.get_project_users_roles(session=session, project_id=project_id)
 
     if current_user.is_superuser:
         return user_roles
@@ -55,16 +55,16 @@ def assign_user_to_project(
     current_user, _, current_rank = info
 
     if current_user.is_superuser:
-        return crud.add_user_to_project_role(db=session, user_project_role_in=user_project_role_in)
+        return crud.add_user_to_project_role(session=session, user_project_role_in=user_project_role_in)
 
-    target_role = crud.get_role(db=session, role_id=user_project_role_in.role_id)
+    target_role = crud.get_role(session=session, role_id=user_project_role_in.role_id)
     if not target_role or target_role.rank < current_rank:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Bạn chỉ được phân quyền vai trò thấp hơn quyền của mình."
         )
 
-    return crud.add_user_to_project_role(db=session, user_project_role_in=user_project_role_in)
+    return crud.add_user_to_project_role(session=session, user_project_role_in=user_project_role_in)
 
 
 @router.put(

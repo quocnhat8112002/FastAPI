@@ -118,6 +118,7 @@ class RoleCreate(RoleBase):
 class RoleUpdate(SQLModel):
     name: Optional[str] = None
     rank: Optional[int] = None
+    description: Optional[str] = None
 
 
 class Role(RoleBase, table=True):
