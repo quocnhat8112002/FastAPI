@@ -1,5 +1,6 @@
 # app/core/mqtt.py
 
+import json
 import ssl
 import logging
 import os
@@ -154,3 +155,8 @@ def log_to_google_sheet(timestamp: str, topic: str, payload: str):
     except Exception as e:
         # Xử lý các lỗi không mong muốn khác
         logger.error(f"❌ Đã xảy ra lỗi không mong muốn khi ghi vào Google Sheet: {e}")
+
+
+def publish(topic: str, payload: dict):
+    client = get_mqtt_client()
+    client.publish(topic, json.dumps(payload))

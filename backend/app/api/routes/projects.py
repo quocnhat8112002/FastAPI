@@ -59,7 +59,7 @@ def create_project(
 @router.put(
     "/{project_id}",
     response_model=ProjectPublic,
-    dependencies=[Depends(verify_rank_in_project(min_rank=2))]
+    dependencies=[Depends(verify_rank_in_project([1, 2, 3]))]
 )
 def update_project(
     *,
@@ -68,7 +68,7 @@ def update_project(
     project_in: ProjectUpdate
 ) -> Any:
     """
-    Update an existing project (rank <= 2 or superuser).
+    Update an existing project (rank or superuser).
     """
     db_project = crud.get_project_list(session=session, project_id=project_id)
     if not db_project:
@@ -80,7 +80,9 @@ def update_project(
 @router.delete(
     "/{project_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[Depends(verify_rank_in_project(min_rank=2))]
+    dependencies=[
+        Depends(verify_rank_in_project([1, 2, 3])), # Kiểm tra quyền trong dự án
+    ],
 )
 def delete_project(
     *,
@@ -88,7 +90,7 @@ def delete_project(
     project_id: UUID
 ) -> None:
     """
-    Delete a project (rank <= 2 or superuser).
+    Delete a project (rank or superuser).
     """
     db_project = crud.get_project_list(session=session, project_id=project_id)
     if not db_project:

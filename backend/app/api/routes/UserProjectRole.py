@@ -13,6 +13,7 @@ from app.models import (
 from app.api.deps import (
     get_current_user,
     get_current_active_superuser,
+    get_current_active_user,
     ProjectAccessInfo,
     SessionDep,
 )
@@ -24,7 +25,7 @@ router = APIRouter(prefix="/UserProjectRole", tags=["UserProjectRole"])
 @router.get(
     "/{project_id}",
     response_model=List[UserProjectRolePublic],
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(get_current_active_user)],
 )
 def read_user_project_roles(
     project_id: UUID,
@@ -33,7 +34,7 @@ def read_user_project_roles(
 ) -> Any:
     current_user, _, current_rank = info
 
-    user_roles = crud.get_project_users_roles(session=session, project_id=project_id)
+    user_roles = crud.get_user_project_role(session=session, project_id=project_id)
 
     if current_user.is_superuser:
         return user_roles
@@ -45,7 +46,7 @@ def read_user_project_roles(
     "/",
     response_model=UserProjectRolePublic,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(get_current_active_user)],
 )
 def assign_user_to_project(
     user_project_role_in: UserProjectRoleCreate,
@@ -70,7 +71,7 @@ def assign_user_to_project(
 @router.put(
     "/{user_id}/{project_id}/{old_role_id}",
     response_model=UserProjectRolePublic,
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(get_current_active_user)],
 )
 def update_user_role_in_project(
     user_id: UUID,
@@ -82,13 +83,13 @@ def update_user_role_in_project(
 ) -> Any:
     current_user, _, current_rank = info
 
-    old_record = crud.get_user_project_role(session, user_id, project_id, old_role_id)
+    old_record = crud.get_user_project_role(session=session, user_id=user_id, project_id=project_id, role_id=old_role_id)
     if not old_record:
         raise HTTPException(status_code=404, detail="Không tìm thấy phân quyền")
 
     if current_user.is_superuser:
-        crud.delete_user_project_role(session, user_id, project_id, old_role_id)
-        return crud.add_user_to_project_role(session, user_project_role_in=UserProjectRoleCreate(
+        crud.delete_user_project_role(session=session, db_upr=old_record)
+        return crud.add_user_to_project_role(session=session, user_project_role_in=UserProjectRoleCreate(
             user_id=user_id,
             project_id=project_id,
             role_id=update_data.role_id,
@@ -97,13 +98,13 @@ def update_user_role_in_project(
     if old_record.role.rank <= current_rank:
         raise HTTPException(status_code=403, detail="Không được sửa người có quyền cao hơn hoặc bằng")
 
-    new_role = crud.get_role(session, update_data.role_id)
+    new_role = crud.get_role(session=session, role_id=update_data.role_id)
     if not new_role or new_role.rank >= current_rank:
         raise HTTPException(status_code=403, detail="Bạn chỉ được gán vai trò thấp hơn bạn")
 
     # Xoá + thêm mới (vì dùng 3 trường làm primary key)
-    crud.delete_user_project_role(session, user_id, project_id, old_role_id)
-    return crud.add_user_to_project_role(session, user_project_role_in=UserProjectRoleCreate(
+    crud.delete_user_project_role(session=session, db_upr=old_record)
+    return crud.add_user_to_project_role(session=session, user_project_role_in=UserProjectRoleCreate(
         user_id=user_id,
         project_id=project_id,
         role_id=update_data.role_id,
@@ -113,7 +114,7 @@ def update_user_role_in_project(
 @router.delete(
     "/{user_id}/{project_id}/{role_id}",
     status_code=status.HTTP_200_OK,
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(get_current_active_user)],
 )
 def remove_user_from_project(
     user_id: UUID,
@@ -124,12 +125,12 @@ def remove_user_from_project(
 ) -> dict:
     current_user, _, current_rank = info
 
-    user_role = crud.get_user_project_role(session, user_id, project_id, role_id)
+    user_role = crud.get_user_project_role(session=session, user_id=user_id, project_id=project_id, role_id=role_id)
     if not user_role:
         raise HTTPException(status_code=404, detail="Không tìm thấy phân quyền")
 
     if current_user.is_superuser or user_role.role.rank > current_rank:
-        crud.delete_user_project_role(session, user_id, project_id, role_id)
+        crud.delete_user_project_role(session=session, db_upr=user_role)
         return {"message": "Xóa phân quyền thành công"}
 
     raise HTTPException(

@@ -6,7 +6,7 @@ from enum import Enum
 from typing import Optional
 
 from pydantic import EmailStr
-from sqlmodel import SQLModel, Field
+from sqlmodel import BigInteger, SQLModel, Field
 
 
 # === USER ===
@@ -18,7 +18,6 @@ class UserBase(SQLModel):
     is_superuser: bool = False
     full_name: Optional[str] = Field(default=None, max_length=255)
     phone: Optional[str] = Field(default=None, max_length=20)
-
 
 # Properties to receive via API on creation
 class UserCreate(UserBase):
@@ -36,7 +35,7 @@ class UserRegister(SQLModel):
 class UserUpdate(UserBase):
     email: Optional[EmailStr] = Field(default=None, max_length=255)  # type: ignore
     password: Optional[str] = Field(default=None, min_length=8, max_length=40)
-
+    system_id: Optional[uuid.UUID] = None
 
 class UserUpdateMe(SQLModel):
     full_name: Optional[str] = Field(default=None, max_length=255)
@@ -58,7 +57,7 @@ class User(UserBase, table=True):
     role_assignment_time: Optional[datetime] = None
     last_login: Optional[datetime] = None
     last_logout: Optional[datetime] = None
-
+    system_rank: Optional[int] = Field(default=None)
 
 # Return schema
 class UserPublic(UserBase):
@@ -66,10 +65,34 @@ class UserPublic(UserBase):
     creation_time: datetime
     last_login: Optional[datetime] = None
     last_logout: Optional[datetime] = None
+    system_rank: Optional[int] = None
 
 
 class UsersPublic(SQLModel):
     data: list[UserPublic]
+    count: int
+
+# === SYSTEM ===
+class SystemBase(SQLModel):
+    rank_total: int
+    description: Optional[str] = None
+
+class SystemCreate(SystemBase):
+    pass
+
+class SystemUpdate(SystemBase):
+    pass
+
+class System(SQLModel, table=True):
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    rank_total: int
+    description: Optional[str] = None
+
+class SystemPublic(SystemBase):
+    id: uuid.UUID
+
+class SystemsPublic(SQLModel):
+    data: list[SystemPublic]
     count: int
 
 
@@ -180,7 +203,6 @@ class Request(SQLModel, table=True):
 
 
 class RequestCreate(SQLModel):
-    project_id: uuid.UUID
     role_id: uuid.UUID
     request_message: Optional[str] = None
 
@@ -228,3 +250,39 @@ class NewPassword(SQLModel):
 
 class Message(SQLModel):
     message: str
+
+
+# ============================== P. ECO_RETREAT========================== ===
+
+class EcoparkBase(SQLModel):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    building_name: Optional[str]
+    picture_name: Optional[str]
+    building_type: Optional[str]
+    building_type_en: Optional[str]
+    amenity_type: Optional[str]
+    amenity_type_en: Optional[str]
+    zone_name: Optional[str]
+    zone_name_en: Optional[str]
+    zone: Optional[str]
+    amenity: Optional[str]
+    direction: Optional[str]
+    bedroom: Optional[int]
+    price: Optional[int]
+    status: Optional[str]
+    direction_en: Optional[str]
+    status_en: Optional[str]
+
+class EcoparkCreate(EcoparkBase):
+    project_id: uuid.UUID
+
+class EcoparkUpdate(EcoparkBase):
+    pass
+
+class EcoparkPublic(EcoparkBase):
+    id: int
+    project_id: uuid.UUID
+
+class Ecopark(EcoparkBase, table=True):
+    price: Optional[int] = Field(default=None, sa_type=BigInteger)
+    project_id: uuid.UUID = Field(foreign_key="projectlist.id") 

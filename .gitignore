@@ -5,3 +5,4 @@ node_modules/
 /blob-report/
 /playwright/.cache/
 backend/app/core/credentials.json
+backend/app/static/

@@ -1,5 +1,5 @@
 from collections.abc import Generator
-from typing import Annotated, Tuple
+from typing import Annotated, Tuple, Callable
 from uuid import UUID
 
 import jwt
@@ -92,17 +92,32 @@ def get_current_user_role_in_project(
 ProjectAccessInfo = Annotated[Tuple[User, UUID, int], Depends(get_current_user_role_in_project)]
 
 # ================== Rank Check Middleware ==================
-def verify_rank_in_project(min_rank: int):
-    def checker(info: ProjectAccessInfo) -> Tuple[User, UUID, int]:
+def verify_rank_in_project(allowed_ranks: list[int]):
+    def checker_rank(info: ProjectAccessInfo) -> Tuple[User, UUID, int]:
         current_user, project_id, rank = info
 
         if current_user.is_superuser:
-            return current_user, project_id, rank
-        
-        if rank > min_rank:
+            return current_user, project_id, 1  # superuser luôn pass
+
+        if rank not in allowed_ranks:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Bạn cần quyền có rank <= {min_rank} để thực hiện hành động này.",
+                detail=f"Bạn cần có quyền với rank nằm trong {allowed_ranks} để thực hiện hành động này.",
             )
+
         return current_user, project_id, rank
-    return checker
+
+    return checker_rank
+
+def verify_system_rank_in(allowed_ranks: list[int]) -> Callable[[CurrentUser], None]:
+    def checker_system_rank(current_user: CurrentUser) -> None:
+        if current_user.is_superuser:
+            return  # Superuser luôn pass
+        
+        if current_user.system_rank is None or current_user.system_rank not in allowed_ranks:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Bạn cần có system_rank nằm trong {allowed_ranks} để thực hiện hành động này.",
+            )
+
+    return checker_system_rank
