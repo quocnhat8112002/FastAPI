@@ -38,7 +38,7 @@ app = FastAPI(
 
 # Mount static files
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+app.mount("/api/v1/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # Set all CORS enabled origins
 if settings.all_cors_origins:

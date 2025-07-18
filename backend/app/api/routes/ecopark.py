@@ -1,4 +1,4 @@
-from typing import Annotated, Any, List, Optional
+from typing import Annotated, Any, Dict, List, Optional
 from uuid import UUID
 
 import pandas as pd
@@ -107,18 +107,18 @@ def upload_excel(
                 project_id=project_id,
                 building_name=row.get("building_name") if not pd.isna(row.get("building_name")) else None,
                 picture_name=row.get("picture_name") if not pd.isna(row.get("picture_name")) else None,
-                building_type=row.get("building_type") if not pd.isna(row.get("building_type")) else None,
+                building_type_vi=row.get("building_type_vi") if not pd.isna(row.get("building_type_vi")) else None,
                 building_type_en=row.get("building_type_en") if not pd.isna(row.get("building_type_en")) else None,
-                amenity_type=row.get("amenity_type") if not pd.isna(row.get("amenity_type")) else None,
+                amenity_type_vi=row.get("amenity_type_vi") if not pd.isna(row.get("amenity_type_vi")) else None,
                 amenity_type_en=row.get("amenity_type_en") if not pd.isna(row.get("amenity_type_en")) else None,
-                zone_name=row.get("zone_name") if not pd.isna(row.get("zone_name")) else None,
+                zone_name_vi=row.get("zone_name_vi") if not pd.isna(row.get("zone_name_vi")) else None,
                 zone_name_en=row.get("zone_name_en") if not pd.isna(row.get("zone_name_en")) else None,
                 zone=row.get("zone") if not pd.isna(row.get("zone")) else None,
                 amenity=row.get("amenity") if not pd.isna(row.get("amenity")) else None,
-                direction=row.get("direction") if not pd.isna(row.get("direction")) else None,
+                direction_vi=row.get("direction_vi") if not pd.isna(row.get("direction_vi")) else None,
                 bedroom=row.get("bedroom") if not pd.isna(row.get("bedroom")) else None,
                 price=int(row["price"]) if not pd.isna(row.get("price")) else None,
-                status=row.get("status") if not pd.isna(row.get("status")) else None,
+                status_vi=row.get("status_vi") if not pd.isna(row.get("status_vi")) else None,
                 direction_en=row.get("direction_en") if not pd.isna(row.get("direction_en")) else None,
                 status_en=row.get("status_en") if not pd.isna(row.get("status_en")) else None,
             )
@@ -161,13 +161,13 @@ def get_filter_options(
         return sorted(results)
 
     return {
-        "status": clean_values(Ecopark.status),
+        "status_vi": clean_values(Ecopark.status_vi),
         "price": clean_values(Ecopark.price, is_numeric=True),
         "bedroom": clean_values(Ecopark.bedroom, is_numeric=True),
-        "direction": clean_values(Ecopark.direction),
-        "building_type": clean_values(Ecopark.building_type),
-        "zone_name": clean_values(Ecopark.zone_name),
-        "amenity_type": clean_values(Ecopark.amenity_type),
+        "direction_vi": clean_values(Ecopark.direction_vi),
+        "building_type_vi": clean_values(Ecopark.building_type_vi),
+        "zone_name_vi": clean_values(Ecopark.zone_name_vi),
+        "amenity_type_vi": clean_values(Ecopark.amenity_type_vi),
     }
 
 @router.post(
@@ -240,18 +240,16 @@ def search_and_publish(
     session: SessionDep,
     request: Request,
     filters: dict[str, str],
-) -> list[Ecopark]:
+) -> List[Dict[str, Any]]:
     try:
         conditions = []
         for field, raw_value in filters.items():
             if not hasattr(Ecopark, field):
-                raise HTTPException(status_code=400, detail=f"Invalid field: {field}")
+                raise HTTPException(status_code=400, detail=f"Invalid filter field: {field}")
 
             col = getattr(Ecopark, field)
-
             value: Any = raw_value.strip()
 
-            # Tự động ép kiểu
             if field.endswith("_id"):
                 try:
                     value = UUID(value)
@@ -262,28 +260,32 @@ def search_and_publish(
             elif value.lower() in ("true", "false"):
                 value = value.lower() == "true"
 
-            # LIKE hoặc bằng
             if isinstance(value, str):
                 conditions.append(col.ilike(f"%{value}%"))
             else:
                 conditions.append(col == value)
 
         stmt = select(Ecopark).where(*conditions)
-        results = session.exec(stmt).all()
+        results = session.exec(stmt).all() 
 
-        # MQTT publish nếu có kết quả
+        # Gửi dữ liệu MQTT nếu có kết quả
         ids = [r.id for r in results if r.id]
         if ids:
             publish(ECO_PARK_TOPIC_ONE, {"channels": ids, "value": 1})
 
-        return results
+        processed_results = [item.model_dump() for item in results]
 
+        return processed_results
+
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Search error: {str(e)}")
+        print(f"Lỗi trong search_and_publish: {e}")
+        raise HTTPException(status_code=500, detail=f"Lỗi tìm kiếm: {str(e)}")
     
 @router.get(
     "/{project_id}/amenity/{amenity}",
-    response_model=dict,
+    response_model=Dict[str, Any],
 )
 def ecopark_search_by_amenity(
     *,
@@ -292,22 +294,40 @@ def ecopark_search_by_amenity(
     project_id: UUID = Path(...),
     info: Annotated[ProjectAccessInfo, Depends(verify_rank_in_project([1, 2, 3]))],
     amenity: str,
+    lang: str = Query("en", regex="^(vi|en)$", description="Mã ngôn ngữ (ví dụ: 'vi' hoặc 'en')"),
 ) -> Any:
-    results = search_and_publish(session, request, {
+    filters = {
         'amenity': amenity,
         'project_id': str(project_id)
-    })
+    }
+    
+    results: List[Dict[str, Any]] = search_and_publish(session, request, filters)
+    items_for_response = []
+    for r in results:
+        ecopark_public_item = EcoparkPublic(**r) 
 
-    items = [EcoparkPublic.model_validate(r) for r in results]
+        translated_item = ecopark_public_item.model_dump() 
+        translated_item['zone_name'] = translated_item.get(f'zone_name_{lang}')
+        translated_item['building_type'] = translated_item.get(f'building_type_{lang}')
+        translated_item['amenity_type'] = translated_item.get(f'amenity_type_{lang}')
+        translated_item['direction'] = translated_item.get(f'direction_{lang}')
+        translated_item['status'] = translated_item.get(f'status_{lang}')
+        for key in list(translated_item.keys()):
+            if key.endswith('_vi') or key.endswith('_en'):
+                del translated_item[key]
+
+        items_for_response.append(translated_item) 
+
     image_url = f"{str(request.base_url).rstrip('/')}/static/EcoRetreat/he_thong_tien_ich.png"
 
     return {
-        "items": items,
+        "items": items_for_response, 
         "image_url": image_url
     }
 
 @router.get(
-    "/{project_id}/amenity/{amenity}/{amenity_type}",
+    "/{project_id}/amenity/{amenity}/{amenity_type_path}",
+    response_model=List[Dict[str, Any]], 
 )
 def ecopark_search_by_amenity_and_type(
     *,
@@ -316,24 +336,39 @@ def ecopark_search_by_amenity_and_type(
     project_id: UUID = Path(...),
     info: Annotated[ProjectAccessInfo, Depends(verify_rank_in_project([1, 2, 3]))],
     amenity: str,
-    amenity_type: str,
-) -> Any:
-    results = search_and_publish(session, request, {
-        'amenity': amenity,
-        'amenity_type': amenity_type,
+    amenity_type_path: str,
+    lang: str = Query("en", regex="^(vi|en)$", description="Mã ngôn ngữ (e.g., 'vi' or 'en')"),
+) -> List[Dict[str, Any]]:
+    filters = {
+        f'amenity_type_{lang}': amenity_type_path,
         'project_id': str(project_id)
-    })
+    }
 
-    return [
-        {
-            **EcoparkPublic.model_validate(r).model_dump(),
-            "image_url": build_flat_image_url(request, r.picture_name)
-        }
-        for r in results
-    ]
+    results: List[Dict[str, Any]] = search_and_publish(session, request, filters)
+
+    items_for_response = []
+    for r in results:
+        ecopark_public_item = EcoparkPublic(**r)
+        translated_item = ecopark_public_item.model_dump()
+        
+        translated_item['zone_name'] = translated_item.get(f'zone_name_{lang}')
+        translated_item['building_type'] = translated_item.get(f'building_type_{lang}')
+        translated_item['amenity_type'] = translated_item.get(f'amenity_type_{lang}')
+        translated_item['direction'] = translated_item.get(f'direction_{lang}')
+        translated_item['status'] = translated_item.get(f'status_{lang}')
+
+        for key in list(translated_item.keys()):
+            if key.endswith('_vi') or key.endswith('_en'):
+                del translated_item[key]
+        
+        translated_item["image_url"] = build_flat_image_url(request, translated_item.get('picture_name'))
+        items_for_response.append(translated_item)
+
+    return items_for_response
 
 @router.get(
-    "/{project_id}/zone/{zone}",
+    "/{project_id}/zone/{zone_param}",
+    response_model=List[Dict[str, Any]], 
 )
 def ecopark_search_by_zone(
     *,
@@ -341,40 +376,61 @@ def ecopark_search_by_zone(
     request: Request,
     project_id: UUID = Path(...),
     info: Annotated[ProjectAccessInfo, Depends(verify_rank_in_project([1, 2, 3]))],
-    zone: str,
-) -> Any:
-    results = search_and_publish(session, request,{
-        'zone': zone,
+    zone_param: str,
+    lang: str = Query("en", regex="^(vi|en)$", description="Mã ngôn ngữ (e.g., 'vi' or 'en')"),
+) -> List[Dict[str, Any]]:
+    filters = {
+        'zone': zone_param, 
         'project_id': str(project_id)
-    })
+    }
+
+    results: List[Dict[str, Any]] = search_and_publish(session, request, filters)
 
     base_url = str(request.base_url).rstrip("/")
     default_image_url = f"{base_url}/static/EcoRetreat/pk.png"
 
-    return [
-        {
-            **EcoparkPublic.model_validate(r).model_dump(),
-            "image_url": build_flat_image_url(request, r.picture_name)
-        }
-        for r in results
-    ]
+    items_for_response = []
+    for r in results:
+        ecopark_public_item = EcoparkPublic(**r)
+        translated_item = ecopark_public_item.model_dump()
+        
+        translated_item['zone_name'] = translated_item.get(f'zone_name_{lang}')
+        translated_item['building_type'] = translated_item.get(f'building_type_{lang}')
+        translated_item['amenity_type'] = translated_item.get(f'amenity_type_{lang}')
+        translated_item['direction'] = translated_item.get(f'direction_{lang}')
+        translated_item['status'] = translated_item.get(f'status_{lang}')
 
-def extract_zone_number(zone_name: str) -> str:
-    match = re.search(r"Phân\s*Khu\s*(\d+)", zone_name, re.IGNORECASE)
+        for key in list(translated_item.keys()):
+            if key.endswith('_vi') or key.endswith('_en'):
+                del translated_item[key]
+        
+        translated_item["image_url"] = build_flat_image_url(request, translated_item.get('picture_name')) or default_image_url
+        items_for_response.append(translated_item)
+
+    return items_for_response
+
+def extract_zone_number(zone_name_str: str) -> str:
+    match = re.search(r"Phân\s*Khu\s*(\d+)", zone_name_str, re.IGNORECASE)
+    if match:
+        return match.group(1)
+    match = re.search(r"Zone\s*(\d+)", zone_name_str, re.IGNORECASE) 
     return match.group(1) if match else ""
 
-def normalize_building_type(building_type: str) -> str:
+def normalize_building_type(building_type_str: str) -> str:
     mapping = {
         "Biệt Thự Đơn Lập": "don_lap",
         "Biệt Thự Song Lập": "song_lap",
         "Shophouse": "shophouse",
         "Townhouse": "townhouse",
         "Residences": "residences",
+        "Detached Villa": "don_lap",
+        "Semi-Detached Villa": "song_lap",
     }
-    return mapping.get(building_type.strip(), "unknown")
+    return mapping.get(building_type_str.strip(), "unknown")
 
 @router.get(
-    "/{project_id}/zone/{zone}/{zone_name}",
+    "/{project_id}/zone/{zone_param}/{zone_name_path}",
+    response_model=List[Dict[str, Any]], 
 )
 def ecopark_search_by_zone_and_name(
     *,
@@ -382,29 +438,44 @@ def ecopark_search_by_zone_and_name(
     request: Request,
     project_id: UUID = Path(...),
     info: Annotated[ProjectAccessInfo, Depends(verify_rank_in_project([1, 2, 3]))],
-    zone: str,
-    zone_name: str,
-) -> Any:
-    results = search_and_publish(session, request, {
-        'zone': zone,
-        'zone_name': zone_name,
+    zone_param: str,
+    zone_name_path: str,
+    lang: str = Query("en", regex="^(vi|en)$", description="Mã ngôn ngữ (e.g., 'vi' or 'en')"),
+) -> List[Dict[str, Any]]:
+    filters = {
+        'zone': zone_param,
+        f'zone_name_{lang}': zone_name_path, 
         'project_id': str(project_id)
-    })
+    }
+    results: List[Dict[str, Any]] = search_and_publish(session, request, filters)
 
-    zone_number = extract_zone_number(zone_name)
-    filename = f"pk_{zone_number}.png" if zone_number else "pk.png"
-    image_url = f"{str(request.base_url).rstrip('/')}/static/EcoRetreat/{filename}"
+    items_for_response = []
+    for r in results:
+        ecopark_public_item = EcoparkPublic(**r)
+        translated_item = ecopark_public_item.model_dump()
+        
+        translated_item['zone_name'] = translated_item.get(f'zone_name_{lang}')
+        translated_item['building_type'] = translated_item.get(f'building_type_{lang}')
+        translated_item['amenity_type'] = translated_item.get(f'amenity_type_{lang}')
+        translated_item['direction'] = translated_item.get(f'direction_{lang}')
+        translated_item['status'] = translated_item.get(f'status_{lang}')
 
-    return [
-        {
-            **EcoparkPublic.model_validate(r).model_dump(),
-            "image_url": image_url
-        }
-        for r in results
-    ]
+        for key in list(translated_item.keys()):
+            if key.endswith('_vi') or key.endswith('_en'):
+                del translated_item[key]
+        
+        zone_number = extract_zone_number(zone_name_path)
+        filename = f"pk_{zone_number}.png" if zone_number else "pk.png"
+        image_url = f"{str(request.base_url).rstrip('/')}/static/EcoRetreat/{filename}"
+        
+        translated_item["image_url"] = build_flat_image_url(request, translated_item.get('picture_name')) or image_url
+        items_for_response.append(translated_item)
+
+    return items_for_response
 
 @router.get(
-    "/{project_id}/zone/{zone}/{zone_name}/{building_type}",
+    "/{project_id}/zone/{zone_param}/{zone_name_path}/{building_type_path}",
+    response_model=List[Dict[str, Any]],
 )
 def ecopark_search_by_zone_name_type(
     *,
@@ -412,32 +483,47 @@ def ecopark_search_by_zone_name_type(
     request: Request,
     project_id: UUID = Path(...),
     info: Annotated[ProjectAccessInfo, Depends(verify_rank_in_project([1, 2, 3]))],
-    zone: str,
-    zone_name: str,
-    building_type: str,
-) -> Any:
-    results = search_and_publish(session, request, {
-        'zone': zone,
-        'zone_name': zone_name,
-        'building_type': building_type,
+    zone_param: str,
+    zone_name_path: str,
+    building_type_path: str,
+    lang: str = Query("en", regex="^(vi|en)$", description="Mã ngôn ngữ (e.g., 'vi' or 'en')"),
+) -> List[Dict[str, Any]]:
+    filters = {
+        'zone': zone_param,
+        f'zone_name_{lang}': zone_name_path,
+        f'building_type_{lang}': building_type_path,
         'project_id': str(project_id)
-    })
+    }
 
-    zone_number = extract_zone_number(zone_name)
-    building_code = normalize_building_type(building_type)
-    image_name = f"{zone_number}_{building_code}.png" if zone_number and building_code != "unknown" else "pk.png"
-    image_url = f"{str(request.base_url).rstrip('/')}/static/EcoRetreat/{image_name}"
+    results: List[Dict[str, Any]] = search_and_publish(session, request, filters)
 
-    return [
-        {
-            **EcoparkPublic.model_validate(r).model_dump(),
-            "image_url": image_url
-        }
-        for r in results
-    ]
+    items_for_response = []
+    for r in results:
+        ecopark_public_item = EcoparkPublic(**r)
+        translated_item = ecopark_public_item.model_dump()
+        translated_item['zone_name'] = translated_item.get(f'zone_name_{lang}')
+        translated_item['building_type'] = translated_item.get(f'building_type_{lang}')
+        translated_item['amenity_type'] = translated_item.get(f'amenity_type_{lang}')
+        translated_item['direction'] = translated_item.get(f'direction_{lang}')
+        translated_item['status'] = translated_item.get(f'status_{lang}')
+
+        for key in list(translated_item.keys()):
+            if key.endswith('_vi') or key.endswith('_en'):
+                del translated_item[key]
+        
+        zone_number = extract_zone_number(zone_name_path)
+        building_code = normalize_building_type(building_type_path)
+        image_name = f"{zone_number}_{building_code}.png" if zone_number and building_code != "unknown" else "pk.png"
+        image_url = f"{str(request.base_url).rstrip('/')}/static/EcoRetreat/{image_name}"
+        
+        translated_item["image_url"] = build_flat_image_url(request, translated_item.get('picture_name')) or image_url
+        items_for_response.append(translated_item)
+
+    return items_for_response
 
 @router.get(
-    "/{project_id}/zone/{zone}/{zone_name}/{building_type}/{building_name}",
+    "/{project_id}/zone/{zone_param}/{zone_name_path}/{building_type_path}/{building_name_param}",
+    response_model=List[Dict[str, Any]], 
 )
 def ecopark_search_by_full_path(
     *,
@@ -445,26 +531,37 @@ def ecopark_search_by_full_path(
     request: Request,
     project_id: UUID = Path(...),
     info: Annotated[ProjectAccessInfo, Depends(verify_rank_in_project([1, 2, 3]))],
-    zone: str,
-    zone_name: str,
-    building_type: str,
-    building_name: str,
-) -> Any:
-    results = search_and_publish(session, request, {
-        'zone': zone,
-        'zone_name': zone_name,
-        'building_type': building_type,
-        'building_name': building_name,
+    zone_param: str,
+    zone_name_path: str,
+    building_type_path: str,
+    building_name_param: str,
+    lang: str = Query("en", regex="^(vi|en)$", description="Mã ngôn ngữ (e.g., 'vi' or 'en')"),
+) -> List[Dict[str, Any]]:
+    filters = {
+        'zone': zone_param,
+        f'zone_name_{lang}': zone_name_path,
+        f'building_type_{lang}': building_type_path,
+        'building_name': building_name_param,
         'project_id': str(project_id)
-    })
+    }
 
-    base_url = str(request.base_url).rstrip("/")
-    folder = "EcoRetreat"
+    results: List[Dict[str, Any]] = search_and_publish(session, request, filters)
 
-    return [
-        {
-            **EcoparkPublic.model_validate(r).model_dump(),
-            "image_url": build_flat_image_url(request, r.picture_name)
-        }
-        for r in results
-    ]
+    items_for_response = []
+    for r in results:
+        ecopark_public_item = EcoparkPublic(**r)
+        translated_item = ecopark_public_item.model_dump()
+        translated_item['zone_name'] = translated_item.get(f'zone_name_{lang}')
+        translated_item['building_type'] = translated_item.get(f'building_type_{lang}')
+        translated_item['amenity_type'] = translated_item.get(f'amenity_type_{lang}')
+        translated_item['direction'] = translated_item.get(f'direction_{lang}')
+        translated_item['status'] = translated_item.get(f'status_{lang}')
+
+        for key in list(translated_item.keys()):
+            if key.endswith('_vi') or key.endswith('_en'):
+                del translated_item[key]
+        
+        translated_item["image_url"] = build_flat_image_url(request, translated_item.get('picture_name'))
+        items_for_response.append(translated_item)
+
+    return items_for_response
