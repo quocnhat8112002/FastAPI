@@ -103,6 +103,7 @@ class ProjectBase(SQLModel):
     address: Optional[str] = None
     type: Optional[str] = None
     investor: Optional[str] = None
+    picture: Optional[str] = None
 
 
 class ProjectCreate(ProjectBase):
@@ -272,6 +273,8 @@ class EcoparkBase(SQLModel):
     status_vi: Optional[str]
     direction_en: Optional[str]
     status_en: Optional[str]
+    description_vi: Optional[str]
+    description_en: Optional[str]
 
 class EcoparkCreate(EcoparkBase):
     project_id: uuid.UUID
