@@ -25,7 +25,7 @@ from app.api.deps import (
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 PROJECT_FOLDER = "DUAN"
-STATIC_URL_PREFIX = "/static"
+STATIC_URL_PREFIX = "/api/v1/static"
 
 
 def build_flat_image_url(request: Request, picture: Optional[str]) -> Optional[str]:

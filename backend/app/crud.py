@@ -1,13 +1,14 @@
 import uuid
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Tuple
 from datetime import datetime
 
 from fastapi import HTTPException
+from sqlalchemy import  func
 from sqlmodel import Session, select, col
 
 from app.core.security import get_password_hash, verify_password
 from app.models import (
-    User, UserCreate, UserUpdate,
+    DetalEcoRetreat, DetalEcoRetreatCreate, DetalEcoRetreatUpdate, User, UserCreate, UserUpdate,
     System, SystemCreate, SystemUpdate,
     Role, RoleCreate, RoleUpdate,
     ProjectList, ProjectCreate, ProjectUpdate,
@@ -231,7 +232,7 @@ def delete_request(*, session: Session, db_request: Request) -> Request:
     session.commit()
     return db_request
 
-# ============================== P. ECO_RETREAT========================== ===
+# ============================== DU AN ECO_RETREAT========================== ===
 def get_ecopark(session: Session, ecopark_id: int) -> Optional[Ecopark]:
     return session.get(Ecopark, ecopark_id)
 
@@ -266,3 +267,87 @@ def delete_ecopark(session: Session, db_ecopark: Ecopark) -> Ecopark:
     session.delete(db_ecopark)
     session.commit()
     return db_ecopark
+
+# ============================== DETAL ECO_RETREAT========================== ===
+def get_detal_eco_retreat_by_id(session: Session, detal_id: uuid.UUID) -> Optional[DetalEcoRetreat]:
+    """
+    Lấy một bản ghi DetalEcoRetreat theo ID.
+    """
+    return session.get(DetalEcoRetreat, detal_id)
+
+
+def get_all_detal_eco_retreats_by_building(
+    session: Session,
+    building_name: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 100
+) -> Tuple[List[DetalEcoRetreat], int]:
+    statement = select(DetalEcoRetreat)
+    count_stmt = select(func.count(DetalEcoRetreat.id))
+
+    if building_name is not None:
+        statement = statement.where(DetalEcoRetreat.building == building_name)
+        count_stmt = count_stmt.where(DetalEcoRetreat.building == building_name)
+
+    statement = statement.offset(skip).limit(limit)
+    
+    results = session.exec(statement).all()
+    total = session.exec(count_stmt).scalar_one()
+
+    return results, total
+
+
+def create_detal_eco_retreat_record(session: Session, detal_in: DetalEcoRetreatCreate) -> DetalEcoRetreat:
+    """
+    Tạo một bản ghi DetalEcoRetreat mới.
+    Yêu cầu ít nhất một trong description_vi hoặc description_en phải có giá trị.
+    """
+    # KIỂM TRA MỚI: Đảm bảo ít nhất một mô tả được cung cấp
+    if not detal_in.description_vi and not detal_in.description_en:
+        raise ValueError("Phải cung cấp ít nhất một mô tả (tiếng Việt hoặc tiếng Anh).")
+
+    detal_obj = DetalEcoRetreat.model_validate(detal_in)
+    session.add(detal_obj)
+    session.commit()
+    session.refresh(detal_obj)
+    return detal_obj
+
+
+def update_detal_eco_retreat_record(session: Session, db_detal: DetalEcoRetreat, detal_in: DetalEcoRetreatUpdate) -> DetalEcoRetreat:
+    """
+    Cập nhật một bản ghi DetalEcoRetreat hiện có.
+    Yêu cầu ít nhất một trong description_vi hoặc description_en phải có giá trị (sau khi cập nhật).
+    """
+    update_data = detal_in.model_dump(exclude_unset=True)
+
+    # Áp dụng các cập nhật vào đối tượng db_detal trước khi kiểm tra
+    # Điều này quan trọng để kiểm tra trạng thái SAU KHI update
+    temp_detal = DetalEcoRetreat.model_validate(db_detal) # Tạo bản sao tạm thời để kiểm tra
+    if "building" in update_data:
+        temp_detal.building = update_data["building"]
+    if "picture" in update_data:
+        temp_detal.picture = update_data["picture"]
+    if "description_vi" in update_data:
+        temp_detal.description_vi = update_data["description_vi"]
+    if "description_en" in update_data:
+        temp_detal.description_en = update_data["description_en"]
+
+    # KIỂM TRA MỚI: Đảm bảo ít nhất một mô tả được cung cấp sau khi cập nhật
+    if not temp_detal.description_vi and not temp_detal.description_en:
+        raise ValueError("Sau khi cập nhật, phải có ít nhất một mô tả (tiếng Việt hoặc tiếng Anh).")
+
+    # Nếu pass kiểm tra, thực hiện cập nhật thực tế
+    db_detal.sqlmodel_update(update_data)
+    session.add(db_detal)
+    session.commit()
+    session.refresh(db_detal)
+    return db_detal
+
+
+def delete_detal_eco_retreat_record(session: Session, db_detal: DetalEcoRetreat) -> DetalEcoRetreat:
+    """
+    Xóa một bản ghi DetalEcoRetreat.
+    """
+    session.delete(db_detal)
+    session.commit()
+    return db_detal

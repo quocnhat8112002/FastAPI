@@ -1,13 +1,14 @@
 from typing import Annotated, Any, Dict, List, Optional
 from uuid import UUID
+import uuid
 
 import pandas as pd
-from fastapi import APIRouter, Path, UploadFile, File, Depends, HTTPException, Query, status, Request
+from fastapi import APIRouter, Form, Path, UploadFile, File, Depends, HTTPException, Query, status, Request
 from sqlalchemy import func
 from sqlmodel import select
 
 from app import crud
-from app.models import Ecopark, EcoparkCreate, EcoparkUpdate, EcoparkPublic
+from app.models import DetalEcoRetreatCreate, DetalEcoRetreatPublic, DetalEcoRetreatUpdate, Ecopark, EcoparkCreate, EcoparkUpdate, EcoparkPublic
 from app.api.deps import get_current_user, SessionDep, verify_rank_in_project
 from app import crud
 from app.api import deps
@@ -16,6 +17,7 @@ import os
 import re
 from fastapi.staticfiles import StaticFiles
 from app.core.mqtt import publish
+from pathlib import Path as PPath
 
 from app.api.deps import (
     SessionDep,
@@ -32,7 +34,7 @@ ECO_PARK_TOPIC_ALL = 'ecopark/192.168.100.101/request/all'
 ECO_PARK_TOPIC_EFF = 'ecopark/192.168.100.101/request/eff'
 
 PROJECT_FOLDER = "EcoRetreat"
-STATIC_URL_PREFIX = "/static"
+STATIC_URL_PREFIX = "/api/v1/static"
 
 router = APIRouter(prefix="/ecopark", tags=["ecopark"])
 
@@ -585,3 +587,290 @@ def ecopark_search_by_full_path(
         items_for_response.append(translated_item)
 
     return items_for_response
+
+##########------------- DETAL Eco Retreat------------- #####################
+STATIC_DIR = PPath("static")
+ECO_RETREAT_DETAIL_UPLOAD_DIR = STATIC_DIR / "EcoRetreat" / "CHITIET"
+# Đảm bảo thư mục tồn tại
+ECO_RETREAT_DETAIL_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+def build_flat_image_detal_url(request: Request, picture_name: Optional[str]) -> Optional[str]:
+    if picture_name:
+        base_url = str(request.base_url).rstrip('/')
+        return f"{base_url}/static/EcoRetreat/CHITIET/{picture_name}"
+    return None
+
+@router.put(
+    "/{building_name}/images",
+    response_model=List[DetalEcoRetreatPublic],
+    status_code=status.HTTP_201_CREATED, 
+    summary="Tải lên và thêm nhiều hình ảnh chi tiết cho một 'building' (chỉ JPG/PNG)",
+    description="Cho phép người dùng tải lên 1 hoặc nhiều file ảnh có định dạng **JPG/JPEG** hoặc **PNG**, "
+)
+async def upload_and_add_detal_images_for_building(
+    *,
+    building_name: str = Path(..., description="Tên 'building' mà các ảnh này thuộc về (chuỗi text bất kỳ)"),
+    session: SessionDep,
+    request: Request,
+    files: List[UploadFile] = File(..., description="Các file ảnh cần tải lên (chỉ JPG/JPEG và PNG)"),
+    descriptions_vi: Optional[List[str]] = Form(None, description="Danh sách mô tả tiếng Việt cho từng ảnh (theo thứ tự file)"),
+    descriptions_en: Optional[List[str]] = Form(None, description="Danh sách mô tả tiếng Anh cho từng ảnh (theo thứ tự file)"),
+    lang: str = Query("en", regex="^(vi|en)$", description="Ngôn ngữ mặc định cho mô tả trong phản hồi"),
+) -> List[DetalEcoRetreatPublic]:
+    """
+    Xử lý việc tải lên nhiều ảnh và tạo bản ghi DetalEcoRetreat tương ứng.
+    Mỗi file ảnh sẽ được lưu trữ với một tên duy nhất (UUID) và tạo một bản ghi mới trong DB.
+    """
+    num_files = len(files)
+    # --- Kiểm tra số lượng mô tả khớp với số lượng file ---
+    if descriptions_vi and len(descriptions_vi) != num_files:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Số lượng mô tả tiếng Việt không khớp với số lượng file ảnh được tải lên."
+        )
+    if descriptions_en and len(descriptions_en) != num_files:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Số lượng mô tả tiếng Anh không khớp với số lượng file ảnh được tải lên."
+        )
+    created_detals_public = []
+    for i, file in enumerate(files):
+        allowed_mime_types = ["image/jpeg", "image/png"]
+        if file.content_type not in allowed_mime_types:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Loại file không hợp lệ cho '{file.filename}'. Chỉ chấp nhận JPG/JPEG và PNG."
+            )
+        # --- Tạo tên file duy nhất và đường dẫn lưu trữ ---
+        file_extension = PPath(file.filename).suffix 
+        unique_filename = f"{uuid.uuid4()}{file_extension}" 
+        file_path = ECO_RETREAT_DETAIL_UPLOAD_DIR / unique_filename
+
+        # --- Lưu file vào hệ thống ---
+        try:
+            ECO_RETREAT_DETAIL_UPLOAD_DIR.mkdir(parents=True, exist_ok=True) 
+            with open(file_path, "wb") as buffer:
+                content = await file.read() 
+                buffer.write(content)
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Không thể lưu file '{file.filename}' do lỗi hệ thống: {e}"
+            )
+
+        description_vi = descriptions_vi[i] if descriptions_vi and i < len(descriptions_vi) else None
+        description_en = descriptions_en[i] if descriptions_en and i < len(descriptions_en) else None
+        
+        detal_create_data = DetalEcoRetreatCreate(
+            building=building_name, 
+            picture=unique_filename, 
+            description_vi=description_vi,
+            description_en=description_en
+        )
+        db_detal = crud.create_detal_eco_retreat_record(session, detal_create_data)
+
+        detal_public = DetalEcoRetreatPublic.model_validate(db_detal)
+        detal_public.image_url = build_flat_image_detal_url(request, db_detal.picture) 
+
+        chosen_description = getattr(db_detal, f'description_{lang}', None)
+        if chosen_description is None:
+            chosen_description = db_detal.description_en 
+        detal_public.description = chosen_description
+
+        created_detals_public.append(detal_public)
+
+    return created_detals_public
+
+@router.get(
+    "/{detal_id}", 
+    response_model=DetalEcoRetreatPublic,
+    summary="Đọc thông tin một hình ảnh chi tiết theo ID"
+)
+def read_detal_image_by_id(
+    *,
+    session: SessionDep,
+    request: Request,
+    detal_id: uuid.UUID = Path(..., description="ID của hình ảnh chi tiết DetalEcoRetreat"),
+    lang: str = Query("en", regex="^(vi|en)$", description="Mã ngôn ngữ cho mô tả"),
+) -> DetalEcoRetreatPublic:
+    """
+    Truy xuất thông tin chi tiết của một bản ghi hình ảnh DetalEcoRetreat dựa trên ID duy nhất của nó.
+    """
+    db_detal = crud.get_detal_eco_retreat_by_id(session, detal_id)
+    if not db_detal:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hình ảnh chi tiết không tìm thấy.")
+
+    detal_public = DetalEcoRetreatPublic.model_validate(db_detal)
+    detal_public.image_url = build_flat_image_detal_url(request, db_detal.picture)
+    
+    chosen_description = getattr(db_detal, f'description_{lang}', None)
+    if chosen_description is None:
+        chosen_description = db_detal.description_en
+    detal_public.description = chosen_description
+    
+    return detal_public
+
+
+@router.get(
+    "/by-building/{building_name}", 
+    response_model=List[DetalEcoRetreatPublic],
+    summary="Đọc tất cả hình ảnh chi tiết cho một 'building'"
+)
+def read_all_detal_images_for_building(
+    *,
+    session: SessionDep,
+    request: Request,
+    building_name: str = Path(..., description="Tên 'building' để lọc hình ảnh"),
+    skip: int = 0,
+    limit: int = 100,
+    lang: str = Query("en", regex="^(vi|en)$", description="Mã ngôn ngữ cho mô tả"),
+) -> List[DetalEcoRetreatPublic]:
+    """
+    Truy xuất danh sách tất cả các hình ảnh chi tiết thuộc về một 'building' cụ thể.
+    """
+    db_detals, total = crud.get_all_detal_eco_retreats_by_building(session, building_name=building_name, skip=skip, limit=limit)
+    
+    response_list = []
+    for db_detal in db_detals:
+        detal_public = DetalEcoRetreatPublic.model_validate(db_detal)
+        detal_public.image_url = build_flat_image_detal_url(request, db_detal.picture)
+
+        chosen_description = getattr(db_detal, f'description_{lang}', None)
+        if chosen_description is None:
+            chosen_description = db_detal.description_en
+        detal_public.description = chosen_description
+        
+        response_list.append(detal_public)
+    
+    return response_list # Bạn có thể thêm "total" vào header hoặc trong một đối tượng wrapper nếu cần
+
+
+@router.put(
+    "/{detal_id}", 
+    response_model=DetalEcoRetreatPublic,
+    summary="Cập nhật thông tin và/hoặc thay thế ảnh của một hình ảnh chi tiết",
+    description="Cập nhật các trường (mô tả, tên building) cho một bản ghi hình ảnh DetalEcoRetreat cụ thể. "
+                "Có thể tùy chọn tải lên một file ảnh mới để thay thế ảnh hiện có. "
+                "**Chỉ chấp nhận ảnh JPG/JPEG và PNG.** "
+                "**Yêu cầu: Sau khi cập nhật, bản ghi phải có ít nhất một mô tả (tiếng Việt hoặc tiếng Anh).**"
+)
+async def update_detal_image_by_id(
+    *,
+    session: SessionDep,
+    request: Request,
+    detal_id: uuid.UUID = Path(..., description="ID của hình ảnh chi tiết cần cập nhật"),
+    file: Optional[UploadFile] = File(None, description="File ảnh mới (JPG/PNG) để thay thế ảnh hiện có"),
+    building: Optional[str] = Form(None, description="Tên 'building' mới cho ảnh (tùy chọn)"),
+    description_vi: Optional[str] = Form(None, description="Mô tả tiếng Việt mới cho ảnh (tùy chọn)"),
+    description_en: Optional[str] = Form(None, description="Mô tả tiếng Anh mới cho ảnh (tùy chọn)"),
+    lang: str = Query("en", regex="^(vi|en)$", description="Mã ngôn ngữ cho mô tả trong phản hồi"),
+) -> DetalEcoRetreatPublic:
+    """
+    Cập nhật một bản ghi DetalEcoRetreat, bao gồm khả năng thay thế file ảnh và cập nhật mô tả.
+    """
+    db_detal = crud.get_detal_eco_retreat_by_id(session, detal_id)
+    if not db_detal:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hình ảnh chi tiết không tìm thấy.")
+
+    detal_update_data = DetalEcoRetreatUpdate(
+        building=building,
+        description_vi=description_vi,
+        description_en=description_en
+    )
+
+    old_picture_name = db_detal.picture
+    new_picture_name = None
+
+    # --- Xử lý file ảnh mới nếu được cung cấp ---
+    if file:
+        allowed_mime_types = ["image/jpeg", "image/png"]
+        if file.content_type not in allowed_mime_types:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Loại file không hợp lệ cho '{file.filename}'. Chỉ chấp nhận JPG/JPEG và PNG."
+            )
+
+        file_extension = PPath(file.filename).suffix
+        new_picture_name = f"{uuid.uuid4()}{file_extension}"
+        new_file_path = ECO_RETREAT_DETAIL_UPLOAD_DIR / new_picture_name
+
+        try:
+            ECO_RETREAT_DETAIL_UPLOAD_DIR.mkdir(parents=True, exist_ok=True) 
+            with open(new_file_path, "wb") as buffer:
+                content = await file.read()
+                buffer.write(content)
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Không thể lưu file mới '{file.filename}' do lỗi hệ thống: {e}"
+            )
+        
+        # 4. Cập nhật tên ảnh mới vào dữ liệu update
+        detal_update_data.picture = new_picture_name
+        # 5. Xóa file ảnh cũ nếu có
+        if old_picture_name:
+            old_file_path = ECO_RETREAT_DETAIL_UPLOAD_DIR / old_picture_name
+            if old_file_path.is_file():
+                try:
+                    os.remove(old_file_path)
+                    print(f"Đã xóa file cũ: {old_file_path}")
+                except OSError as e:
+                    print(f"Lỗi khi xóa file cũ '{old_file_path}': {e}") # Log lỗi, không chặn request
+
+    try:
+        db_detal = crud.update_detal_eco_retreat_record(session, db_detal, detal_update_data)
+    except ValueError as e:
+        # Nếu có lỗi về mô tả (tiếng Việt/Anh bị thiếu)
+        # Đồng thời, nếu đã lưu file mới, hãy cố gắng xóa nó để tránh rác
+        if new_picture_name:
+            if (ECO_RETREAT_DETAIL_UPLOAD_DIR / new_picture_name).is_file():
+                try:
+                    os.remove(ECO_RETREAT_DETAIL_UPLOAD_DIR / new_picture_name)
+                    print(f"Đã xóa file mới do lỗi DB rollback: {new_picture_name}")
+                except OSError as rollback_e:
+                    print(f"Lỗi khi rollback xóa file mới: {rollback_e}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    
+    # --- Chuẩn bị dữ liệu trả về ---
+    detal_public = DetalEcoRetreatPublic.model_validate(db_detal)
+    detal_public.image_url = build_flat_image_detal_url(request, db_detal.picture)
+    
+    chosen_description = getattr(db_detal, f'description_{lang}', None)
+    if chosen_description is None:
+        chosen_description = db_detal.description_en
+    detal_public.description = chosen_description
+
+    return detal_public
+
+
+
+@router.delete(
+    "/{detal_id}", 
+    response_model=Dict[str, str],
+    summary="Xóa một hình ảnh chi tiết theo ID"
+)
+def delete_detal_image_by_id(
+    *,
+    session: SessionDep,
+    detal_id: uuid.UUID = Path(..., description="ID của hình ảnh chi tiết cần xóa"),
+) -> Dict[str, str]:
+    """
+    Xóa một bản ghi hình ảnh DetalEcoRetreat khỏi cơ sở dữ liệu.
+    Lưu ý: API này không tự động xóa file ảnh vật lý trên server.
+    """
+    db_detal = crud.get_detal_eco_retreat_by_id(session, detal_id)
+    if not db_detal:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hình ảnh chi tiết không tìm thấy.")
+
+    crud.delete_detal_eco_retreat_record(session, db_detal)
+    
+    # Tùy chọn: Xóa file vật lý. Hãy cẩn thận khi triển khai.
+    # if db_detal.picture:
+    #     file_to_delete = ECO_RETREAT_DETAIL_UPLOAD_DIR / db_detal.picture
+    #     if file_to_delete.is_file():
+    #         try:
+    #             os.remove(file_to_delete)
+    #         except OSError as e:
+    #             print(f"Lỗi khi xóa file {file_to_delete}: {e}") # Log lỗi, không raise
+    
+    return {"message": "Hình ảnh chi tiết đã được xóa thành công."}

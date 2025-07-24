@@ -5,7 +5,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional
 
-from pydantic import EmailStr
+from pydantic import BaseModel, EmailStr
 from sqlmodel import BigInteger, SQLModel, Field
 
 
@@ -261,7 +261,7 @@ class Message(SQLModel):
     message: str
 
 
-# ============================== P. ECO_RETREAT========================== ===
+# ============================== DU AN: ECO_RETREAT========================== ===
 
 class EcoparkBase(SQLModel):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -297,3 +297,33 @@ class EcoparkPublic(EcoparkBase):
 class Ecopark(EcoparkBase, table=True):
     price: Optional[int] = Field(default=None, sa_type=BigInteger)
     project_id: uuid.UUID = Field(foreign_key="projectlist.id") 
+
+# === Detal Eco Retreat ===
+class DetalEcoRetreatBase(SQLModel):
+    building: str 
+    picture: Optional[str] = None 
+    description_vi: Optional[str] = None 
+    description_en: Optional[str] = None 
+
+class DetalEcoRetreatCreate(DetalEcoRetreatBase):
+    pass
+
+class DetalEcoRetreatUpdate(DetalEcoRetreatBase):
+    building: Optional[str] = None
+    picture: Optional[str] = None
+    description_vi: Optional[str] = None
+    description_en: Optional[str] = None
+
+class DetalEcoRetreat(SQLModel, table=True):
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    
+
+class DetalEcoRetreatPublic(SQLModel):
+    id: uuid.UUID
+    building: str
+    picture: Optional[str] = None
+    description: Optional[str] = None
+    image_url: Optional[str] = None
+
+class DetalImageUploadData(BaseModel):
+    pass
