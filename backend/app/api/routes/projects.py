@@ -1,6 +1,7 @@
-from typing import Any
+from typing import Annotated, Any, Dict, List, Optional
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from pydantic import HttpUrl
 from sqlmodel import select, func
 
 from app import crud
@@ -10,36 +11,111 @@ from app.models import (
     ProjectUpdate,
     ProjectPublic,
     ProjectsPublic,
+    Role,
+    UserProjectRole,
 )
 from app.api.deps import (
     SessionDep,
     get_current_user,
     verify_rank_in_project,
+    CurrentUser,
+    verify_system_rank_in
 )
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
+PROJECT_FOLDER = "DUAN"
+STATIC_URL_PREFIX = "/static"
 
-@router.get("/", response_model=ProjectsPublic)
+
+def build_flat_image_url(request: Request, picture: Optional[str]) -> Optional[str]:
+    if not picture:
+        return None
+    base = str(request.base_url).rstrip("/")
+    return f"{base}{STATIC_URL_PREFIX}/{PROJECT_FOLDER}/{picture}.jpg"
+
+
+@router.get("/",
+        dependencies=[
+            Depends(get_current_user), 
+            Depends(verify_system_rank_in([1, 2, 3, 4, 5, 6])) # Kiểm tra system_rank, với 1 là rank của superuser
+        ])
 def read_projects(
     *,
     session: SessionDep,
-    current_user=Depends(get_current_user),
+    current_user: CurrentUser, 
+    request: Request,
     skip: int = 0,
-    limit: int = 100
-) -> Any:
+    limit: int = 100,
+    lang: str = Query("en", regex="^(vi|en)$", description="Mã ngôn ngữ (e.g., 'vi' or 'en')"),
+) -> Dict[str, Any]:
     """
-    Retrieve all projects (superuser gets all, others get only accessible ones).
+    Lấy tất cả các dự án và rank của người dùng hiện tại đối với từng dự án.
+    Nếu người dùng chưa được gán rank cho dự án cụ thể, rank sẽ là null.
     """
-    if current_user.is_superuser:
-        count_stmt = select(func.count()).select_from(ProjectList)
-        count = session.exec(count_stmt).one()
-        projects = crud.get_all_project_lists(session=session, skip=skip, limit=limit)
-    else:
-        projects, count = crud.get_all_project_lists(session, user_id=current_user.id, skip=skip, limit=limit)
 
-    return ProjectsPublic(data=projects, count=count)
+    projects_from_db: List[ProjectList] = []
+    count: int = 0
 
+    count_stmt = select(func.count()).select_from(ProjectList)
+    count = session.exec(count_stmt).one()
+    projects_from_db = crud.get_all_project_lists(session=session, skip=skip, limit=limit)
+
+    user_project_ranks: Dict[UUID, int] = {}
+    
+    if not current_user.is_superuser:
+        project_ids_in_list = [project.id for project in projects_from_db]
+        
+        if project_ids_in_list: 
+            user_project_roles_results = session.exec(
+                select(UserProjectRole.project_id, UserProjectRole.role_id)
+                .where(UserProjectRole.user_id == current_user.id)
+                .where(UserProjectRole.project_id.in_(project_ids_in_list))
+            ).all()
+
+            role_ids_to_lookup = list(set([role_id for project_id, role_id in user_project_roles_results]))
+
+            role_id_to_rank: Dict[UUID, int] = {}
+            if role_ids_to_lookup:
+                ranks_from_roles = session.exec(
+                    select(Role.id, Role.rank)
+                    .where(Role.id.in_(role_ids_to_lookup))
+                ).all()
+                for role_id, rank in ranks_from_roles:
+                    role_id_to_rank[role_id] = rank
+            
+            for project_id, role_id in user_project_roles_results:
+                if role_id in role_id_to_rank:
+                    user_project_ranks[project_id] = role_id_to_rank[role_id]
+
+    items_for_response = [] 
+    for project_obj in projects_from_db:
+        translated_item = project_obj.model_dump() 
+
+        translated_item['name'] = translated_item.get(f'name_{lang}')
+        translated_item['type'] = translated_item.get(f'type_{lang}')
+        translated_item['address'] = translated_item.get(f'address_{lang}')
+        translated_item['investor'] = translated_item.get(f'investor_{lang}')
+
+        # Xóa các khóa gốc (_vi, _en) sau khi đã dịch
+        for key in list(translated_item.keys()):
+            if key.endswith('_vi') or key.endswith('_en'):
+                del translated_item[key]
+
+        image_name_from_db = getattr(project_obj, 'picture', None)
+        translated_item['image_url'] = build_flat_image_url(request, image_name_from_db)
+        
+        if current_user.is_superuser:
+            translated_item['rank'] = 1 
+        else:
+            translated_item['rank'] = user_project_ranks.get(project_obj.id, None) 
+
+        items_for_response.append(translated_item)
+
+    return {
+        "data": items_for_response,
+        "count": count
+    }
 
 @router.post("/", response_model=ProjectPublic, status_code=201)
 def create_project(

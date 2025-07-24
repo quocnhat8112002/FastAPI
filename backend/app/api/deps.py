@@ -111,9 +111,6 @@ def verify_rank_in_project(allowed_ranks: list[int]):
 
 def verify_system_rank_in(allowed_ranks: list[int]) -> Callable[[CurrentUser], None]:
     def checker_system_rank(current_user: CurrentUser) -> None:
-        if current_user.is_superuser:
-            return  # Superuser luôn pass
-        
         if current_user.system_rank is None or current_user.system_rank not in allowed_ranks:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

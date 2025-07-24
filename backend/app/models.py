@@ -99,10 +99,14 @@ class SystemsPublic(SQLModel):
 # === PROJECT ===
 
 class ProjectBase(SQLModel):
-    name: str
-    address: Optional[str] = None
-    type: Optional[str] = None
-    investor: Optional[str] = None
+    name_vi: Optional[str] = None
+    name_en: Optional[str] = None
+    address_vi: Optional[str] = None
+    address_en: Optional[str] = None
+    type_vi: Optional[str] = None
+    type_en: Optional[str] = None
+    investor_vi: Optional[str] = None
+    investor_en: Optional[str] = None
     picture: Optional[str] = None
 
 
@@ -197,8 +201,10 @@ class Request(SQLModel, table=True):
     requester_id: uuid.UUID = Field(foreign_key="user.id", index=True)
     approver_id: Optional[uuid.UUID] = Field(default=None, foreign_key="user.id", nullable=True)
     status: RequestStatus = Field(default=RequestStatus.pending)
-    request_message: Optional[str] = None
-    response_message: Optional[str] = None
+    request_message_vi: Optional[str] = None
+    request_message_en: Optional[str] = None
+    response_message_vi: Optional[str] = None
+    response_message_en: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: Optional[datetime] = None
 
@@ -221,8 +227,10 @@ class RequestPublic(SQLModel):
     requester_id: uuid.UUID
     approver_id: Optional[uuid.UUID] = None
     status: RequestStatus
-    request_message: Optional[str] = None
-    response_message: Optional[str] = None
+    request_message_vi: Optional[str] = None
+    request_message_en: Optional[str] = None
+    response_message_vi: Optional[str] = None
+    response_message_en: Optional[str] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
 
@@ -273,8 +281,8 @@ class EcoparkBase(SQLModel):
     status_vi: Optional[str]
     direction_en: Optional[str]
     status_en: Optional[str]
-    description_vi: Optional[str]
-    description_en: Optional[str]
+    description_vi: Optional[str] = None
+    description_en: Optional[str] = None
 
 class EcoparkCreate(EcoparkBase):
     project_id: uuid.UUID

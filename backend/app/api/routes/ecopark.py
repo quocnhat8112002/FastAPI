@@ -36,43 +36,12 @@ STATIC_URL_PREFIX = "/static"
 
 router = APIRouter(prefix="/ecopark", tags=["ecopark"])
 
+
 def build_flat_image_url(request: Request, picture_name: Optional[str]) -> Optional[str]:
     if not picture_name:
         return None
     base = str(request.base_url).rstrip("/")
     return f"{base}{STATIC_URL_PREFIX}/{PROJECT_FOLDER}/{picture_name}.png"
-
-@router.get("/", response_model=list[EcoparkPublic], dependencies=[Depends(get_current_active_superuser)])
-def list_ecoparks(
-    session: SessionDep,
-    project_id: UUID = Query(...),
-    skip: int = 0,
-    limit: int = 100,
-) -> Any:
-    data, _ = crud.get_all_ecoparks(session, project_id=project_id, skip=skip, limit=limit)
-    return data
-
-
-@router.post("/", response_model=EcoparkPublic, status_code=201, dependencies=[Depends(get_current_active_superuser)])
-def create_ecopark(
-    *,
-    session: SessionDep,
-    ecopark_in: EcoparkCreate
-) -> Any:
-    return crud.create_ecopark(session=session, ecopark_in=ecopark_in)
-
-
-@router.put("/{ecopark_id}", response_model=EcoparkPublic, dependencies=[Depends(get_current_active_superuser)])
-def update_ecopark(
-    *,
-    session: SessionDep,
-    ecopark_id: int,
-    ecopark_in: EcoparkUpdate
-) -> Any:
-    db_ecopark = crud.get_ecopark(session, ecopark_id)
-    if not db_ecopark:
-        raise HTTPException(status_code=404, detail="Không tìm thấy ecopark")
-    return crud.update_ecopark(session, db_ecopark, ecopark_in)
 
 
 @router.delete("/{ecopark_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(get_current_active_superuser)])
@@ -149,30 +118,50 @@ def get_filter_options(
     *,
     session: SessionDep,
     project_id: UUID = Path(...),
-    info: Annotated[ProjectAccessInfo, Depends(verify_rank_in_project([1, 2, 3]))]
+    info: Annotated[ProjectAccessInfo, Depends(verify_rank_in_project([1, 2, 3]))],
+    lang: str = Query("en", regex="^(vi|en)$", description="Mã ngôn ngữ (e.g., 'vi' or 'en')"),
     ) -> Any:
     """
     Trả về danh sách giá trị không trùng lặp của các trường lọc trong Ecopark.
     """
-    def clean_values(column):
+    def clean_values(column_for_lang: Any, numerical_column: Optional[Any] = None): 
         invalids = {"", " ", "NaN", "nan", "null", "None", "N", "-", "--"}
-        query = session.exec(select(column).distinct()).all()
-        results = [r for (r,) in query if r is not None and str(r).strip() not in invalids]
+        
+        if numerical_column is not None:
+            column_to_query = numerical_column
+        else:
+            column_to_query = column_for_lang
+
+        query_results = session.exec(select(column_to_query).distinct()).all()
+        results = [r for r in query_results if r is not None and str(r).strip() not in invalids]
+        
+        if numerical_column is not None: 
+            try:
+                return sorted([int(r) for r in results]) 
+            except ValueError:
+                return sorted(results)
         return sorted(results)
 
+    status_col = Ecopark.status_vi if lang == 'vi' else Ecopark.status_en
+    direction_col = Ecopark.direction_vi if lang == 'vi' else Ecopark.direction_en
+    building_type_col = Ecopark.building_type_vi if lang == 'vi' else Ecopark.building_type_en
+    zone_name_col = Ecopark.zone_name_vi if lang == 'vi' else Ecopark.zone_name_en
+    amenity_type_col = Ecopark.amenity_type_vi if lang == 'vi' else Ecopark.amenity_type_en
+
     return {
-        "status_vi": clean_values(Ecopark.status_vi),
-        "price": clean_values(Ecopark.price, is_numeric=True),
-        "bedroom": clean_values(Ecopark.bedroom, is_numeric=True),
-        "direction_vi": clean_values(Ecopark.direction_vi),
-        "building_type_vi": clean_values(Ecopark.building_type_vi),
-        "zone_name_vi": clean_values(Ecopark.zone_name_vi),
-        "amenity_type_vi": clean_values(Ecopark.amenity_type_vi),
+        "status": clean_values(status_col),
+        "price": clean_values(None, Ecopark.price), 
+        "bedroom": clean_values(None, Ecopark.bedroom), 
+        "direction": clean_values(direction_col),
+        "building_type": clean_values(building_type_col),
+        "zone_name": clean_values(zone_name_col),
+        "amenity_type": clean_values(amenity_type_col),
     }
+
 
 @router.post(
     "/{project_id}/filter",
-    response_model=list[EcoparkPublic],
+    response_model=List[Dict[str, Any]],
 )
 def filter_ecopark_by_json(
     *,
@@ -180,14 +169,14 @@ def filter_ecopark_by_json(
     session: SessionDep,
     project_id: UUID = Path(...),
     info: Annotated[ProjectAccessInfo, Depends(verify_rank_in_project([1, 2, 3]))],
-    payload: dict
-) -> Any:
+    payload: Dict[str, Any],
+    lang: str = Query("en", regex="^(vi|en)$", description="Mã ngôn ngữ (e.g., 'vi' or 'en')"),
+) -> List[Dict[str, Any]]:
     """
     Lọc ecopark theo điều kiện động từ JSON.
     """
     query = select(Ecopark)
     conditions = []
-
     min_price = payload.get("min_price")
     max_price = payload.get("max_price")
 
@@ -202,13 +191,20 @@ def filter_ecopark_by_json(
     skip_price_filter = "min_price" in payload or "max_price" in payload
 
     for key, value in payload.items():
-        if not value or key in ["min_price", "max_price"]:
+        if not value or key in ["min_price", "max_price", "lang"]:
             continue
 
-        if not hasattr(Ecopark, key):
-            raise HTTPException(status_code=400, detail=f"Invalid filter field: {key}")
+        translatable_filter_fields = ["status", "direction", "building_type", "zone_name", "amenity_type", "description"]
+        
+        if key in translatable_filter_fields:
+            col_name = f"{key}_{lang}" 
+        else:
+            col_name = key 
 
-        col = getattr(Ecopark, key)
+        if not hasattr(Ecopark, col_name):
+            raise HTTPException(status_code=400, detail=f"Invalid filter field: {key} for language {lang}")
+
+        col = getattr(Ecopark, col_name)
 
         if key == "price" and not skip_price_filter:
             if isinstance(value, str) and "-" in value:
@@ -224,7 +220,7 @@ def filter_ecopark_by_json(
                 except ValueError:
                     raise HTTPException(status_code=400, detail="Price must be numeric")
         elif key == "bedroom":
-            conditions.append(col == int(value))
+            conditions.append(getattr(Ecopark, key) == int(value)) 
         else:
             conditions.append(col == str(value))
 
@@ -232,9 +228,33 @@ def filter_ecopark_by_json(
     ids = [r.id for r in results if r.id]
 
     if ids:
-        publish(ECO_PARK_TOPIC_ONE, {"channels": ids, "value": 1})
+        publish("ecopark_topic_one", {"channels": ids, "value": 1})
 
-    return [EcoparkPublic.model_validate(r).model_dump() for r in results]
+    items_for_response = []
+    translatable_display_fields = ["zone_name", "building_type", "amenity_type", "direction", "status", "description"]
+    for r in results:
+        item_dict = r.model_dump() 
+    
+        processed_item = {}
+        processed_item['id'] = item_dict.get('id')
+        processed_item['building_name'] = item_dict.get('building_name')
+        processed_item['picture_name'] = item_dict.get('picture_name')
+        processed_item['zone'] = item_dict.get('zone')
+        processed_item['amenity'] = item_dict.get('amenity')
+        processed_item['bedroom'] = item_dict.get('bedroom')
+        processed_item['price'] = item_dict.get('price')
+        processed_item['project_id'] = item_dict.get('project_id')
+        
+        for field_name in translatable_display_fields:
+            chosen_value = item_dict.get(f'{field_name}_{lang}')
+            if chosen_value is None:
+                chosen_value = item_dict.get(f'{field_name}_en')
+            processed_item[field_name] = chosen_value
+
+        processed_item['image_url'] = build_flat_image_url(request, processed_item.get('picture_name'))
+        items_for_response.append(processed_item)
+
+    return items_for_response
 
 def search_and_publish(
     session: SessionDep,

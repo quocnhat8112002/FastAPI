@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlmodel import select
 from uuid import UUID
-from typing import List
+from typing import Any, Dict, List
 from datetime import datetime
 
 from app.models import (
@@ -27,6 +27,23 @@ import app.crud as crud
 
 router = APIRouter(prefix="/req", tags=["Request"])
 
+def translate_request_item(item_dict: Dict[str, Any], lang: str) -> Dict[str, Any]:
+    """
+    Dịch các trường tin nhắn trong một request item dựa trên ngôn ngữ yêu cầu.
+    """
+    item_dict['request_message'] = item_dict.get(f'request_message_{lang}')
+    if item_dict['request_message'] is None:
+        item_dict['request_message'] = item_dict.get('request_message_en') # Mặc định là tiếng Anh nếu không có bản dịch
+    
+    item_dict['response_message'] = item_dict.get(f'response_message_{lang}')
+    if item_dict['response_message'] is None:
+        item_dict['response_message'] = item_dict.get('response_message_en') 
+
+    for key in list(item_dict.keys()):
+        if key.endswith('_vi') or key.endswith('_en'):
+            del item_dict[key]
+            
+    return item_dict
 
 @router.get("/", response_model=RequestPublic)
 def get_requests_by_project(
@@ -35,6 +52,7 @@ def get_requests_by_project(
     current_user=Depends(get_current_active_user),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, le=100),
+    lang: str = Query("en", regex="^(vi|en)$", description="Mã ngôn ngữ (ví dụ: 'vi' hoặc 'en')"),
 ):
     user, project_id, user_rank = project_info
 
@@ -73,7 +91,13 @@ def get_requests_by_project(
         )
     ).all()
 
-    return RequestPublic(data=requests, count=len(total))
+    translated_requests = []
+    for req_obj in requests:
+        req_dict = req_obj.model_dump() 
+        translated_req_dict = translate_request_item(req_dict, lang)
+        translated_requests.append(translated_req_dict)
+
+    return RequestPublic(data=translated_requests, count=total)
 
 # 2. ✅ POST - tạo request (chỉ được yêu cầu role có rank >= 3)
 @router.post(
@@ -89,8 +113,8 @@ def create_request(
     request_data: RequestCreate,
     session: SessionDep,
     current_user: CurrentUser,
+    lang: str = Query("en", regex="^(vi|en)$", description="Mã ngôn ngữ (ví dụ: 'vi' hoặc 'en')"),
 ):
-    
     role = session.get(Role, request_data.role_id)
     if not role:
         raise HTTPException(status_code=404, detail="Vai trò không tồn tại")
@@ -101,12 +125,15 @@ def create_request(
             status_code=403,
             detail="Chỉ được yêu cầu các vai trò có rank >= 3 (thấp quyền hơn)",
         )
-    return crud.create_request(
+    created_request_obj = crud.create_request(
         session=session,
         request_in=request_data,
         requester_id=current_user.id,
         project_id=project_id  
     )
+
+    translated_created_request_dict = translate_request_item(created_request_obj.model_dump(), lang)
+    return RequestPublic(data=[translated_created_request_dict], count=1)
 
 # 3. ✅ PUT - cập nhật trạng thái (chỉ xử lý nếu request có rank < mình)
 @router.put(
@@ -120,6 +147,7 @@ def update_request_status(
     update_data: RequestUpdate,
     session: SessionDep,
     info: ProjectAccessInfo,
+    lang: str = Query("en", regex="^(vi|en)$", description="Mã ngôn ngữ (ví dụ: 'vi' hoặc 'en')"),
 ):
     current_user, access_project_id, current_rank = info
 
@@ -140,10 +168,13 @@ def update_request_status(
             detail="Chỉ được duyệt request có rank thấp hơn bạn",
         )
     # Tùy chọn: Nếu không truyền message, tạo thông điệp mặc định
-    if not update_data.response_message:
-        update_data.response_message = (
-            "Yêu cầu đã được duyệt" if update_data.status == "approved" else "Yêu cầu bị từ chối"
-        )
+    if not update_data.response_message_vi and not update_data.response_message_en:
+        if update_data.status == "approved":
+            update_data.response_message_vi = "Yêu cầu đã được duyệt"
+            update_data.response_message_en = "Request has been approved"
+        else: # "rejected"
+            update_data.response_message_vi = "Yêu cầu bị từ chối"
+            update_data.response_message_en = "Request has been rejected"
 
     updated = crud.update_request(
         session=session,
@@ -171,7 +202,9 @@ def update_request_status(
             )
         )
 
-    return updated
+    translated_updated_request_dict = translate_request_item(updated.model_dump(), lang)
+
+    return RequestPublic(data=[translated_updated_request_dict], count=1)
 
 
 # 4. ✅ DELETE - chỉ admin được phép xoá request
