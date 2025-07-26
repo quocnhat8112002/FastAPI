@@ -233,20 +233,21 @@ def delete_request(*, session: Session, db_request: Request) -> Request:
     return db_request
 
 # ============================== DU AN ECO_RETREAT========================== ===
-def get_ecopark(session: Session, ecopark_id: int) -> Optional[Ecopark]:
-    return session.get(Ecopark, ecopark_id)
+def get(*, session: Session, ecopark_id: uuid.UUID) -> Optional[Ecopark]:
+        """
+        Lấy một bản ghi Ecopark dựa trên ID (UUID) của nó.
+        """
+        return session.get(Ecopark, ecopark_id)
+
+def get_by_port(*, session: Session, port: int) -> Optional[Ecopark]:
+    """
+    Lấy một bản ghi Ecopark dựa trên số port của nó.
+    """
+    statement = select(Ecopark).where(Ecopark.port == port)
+    return session.exec(statement).first()
 
 
-def get_all_ecoparks(session: Session, project_id: str, skip: int = 0, limit: int = 100):
-    statement = select(Ecopark).where(Ecopark.project_id == project_id).offset(skip).limit(limit)
-    results = session.exec(statement).all()
-
-    count_stmt = select(Ecopark).where(Ecopark.project_id == project_id)
-    total = session.exec(count_stmt).count()
-    return results, total
-
-
-def create_ecopark(session: Session, ecopark_in: EcoparkCreate) -> Ecopark:
+def create_ecopark(*, session: Session, ecopark_in: EcoparkCreate) -> Ecopark:
     ecopark = Ecopark.model_validate(ecopark_in)
     session.add(ecopark)
     session.commit()
@@ -254,7 +255,7 @@ def create_ecopark(session: Session, ecopark_in: EcoparkCreate) -> Ecopark:
     return ecopark
 
 
-def update_ecopark(session: Session, db_ecopark: Ecopark, ecopark_in: EcoparkUpdate) -> Ecopark:
+def update_ecopark(*, session: Session, db_ecopark: Ecopark, ecopark_in: EcoparkUpdate) -> Ecopark:
     update_data = ecopark_in.model_dump(exclude_unset=True)
     db_ecopark.sqlmodel_update(update_data)
     session.add(db_ecopark)
@@ -263,7 +264,7 @@ def update_ecopark(session: Session, db_ecopark: Ecopark, ecopark_in: EcoparkUpd
     return db_ecopark
 
 
-def delete_ecopark(session: Session, db_ecopark: Ecopark) -> Ecopark:
+def delete_ecopark(*, session: Session, db_ecopark: Ecopark) -> Ecopark:
     session.delete(db_ecopark)
     session.commit()
     return db_ecopark
@@ -275,19 +276,26 @@ def get_detal_eco_retreat_by_id(session: Session, detal_id: uuid.UUID) -> Option
     """
     return session.get(DetalEcoRetreat, detal_id)
 
+def get_detal_by_port_and_picture(session: Session, port: int, picture_name: str) -> Optional[DetalEcoRetreat]:
+    statement = select(DetalEcoRetreat).where(
+        DetalEcoRetreat.port == port,
+        DetalEcoRetreat.picture == picture_name
+    )
+    result = session.exec(statement).first()
+    return result
 
 def get_all_detal_eco_retreats_by_building(
     session: Session,
-    building_name: Optional[str] = None,
+    port: Optional[str] = None,
     skip: int = 0,
     limit: int = 100
 ) -> Tuple[List[DetalEcoRetreat], int]:
     statement = select(DetalEcoRetreat)
     count_stmt = select(func.count(DetalEcoRetreat.id))
 
-    if building_name is not None:
-        statement = statement.where(DetalEcoRetreat.building == building_name)
-        count_stmt = count_stmt.where(DetalEcoRetreat.building == building_name)
+    if port is not None:
+        statement = statement.where(DetalEcoRetreat.port == port)
+        count_stmt = count_stmt.where(DetalEcoRetreat.port == port)
 
     statement = statement.offset(skip).limit(limit)
     
@@ -302,9 +310,6 @@ def create_detal_eco_retreat_record(session: Session, detal_in: DetalEcoRetreatC
     Tạo một bản ghi DetalEcoRetreat mới.
     Yêu cầu ít nhất một trong description_vi hoặc description_en phải có giá trị.
     """
-    # KIỂM TRA MỚI: Đảm bảo ít nhất một mô tả được cung cấp
-    if not detal_in.description_vi and not detal_in.description_en:
-        raise ValueError("Phải cung cấp ít nhất một mô tả (tiếng Việt hoặc tiếng Anh).")
 
     detal_obj = DetalEcoRetreat.model_validate(detal_in)
     session.add(detal_obj)
@@ -323,8 +328,8 @@ def update_detal_eco_retreat_record(session: Session, db_detal: DetalEcoRetreat,
     # Áp dụng các cập nhật vào đối tượng db_detal trước khi kiểm tra
     # Điều này quan trọng để kiểm tra trạng thái SAU KHI update
     temp_detal = DetalEcoRetreat.model_validate(db_detal) # Tạo bản sao tạm thời để kiểm tra
-    if "building" in update_data:
-        temp_detal.building = update_data["building"]
+    if "port" in update_data:
+        temp_detal.port = update_data["port"]
     if "picture" in update_data:
         temp_detal.picture = update_data["picture"]
     if "description_vi" in update_data:

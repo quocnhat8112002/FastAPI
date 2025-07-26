@@ -264,7 +264,8 @@ class Message(SQLModel):
 # ============================== DU AN: ECO_RETREAT========================== ===
 
 class EcoparkBase(SQLModel):
-    id: Optional[int] = Field(default=None, primary_key=True)
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    port: int = Field(index=True, unique=True)
     building_name: Optional[str]
     picture_name: Optional[str]
     building_type_vi: Optional[str]
@@ -285,45 +286,44 @@ class EcoparkBase(SQLModel):
     description_en: Optional[str] = None
 
 class EcoparkCreate(EcoparkBase):
-    project_id: uuid.UUID
+    port: int
 
 class EcoparkUpdate(EcoparkBase):
-    pass
+    id: Optional[uuid.UUID] = None 
+    port: Optional[int] = None
 
 class EcoparkPublic(EcoparkBase):
-    id: int
-    project_id: uuid.UUID
+    id: uuid.UUID
+    port: int
 
 class Ecopark(EcoparkBase, table=True):
     price: Optional[int] = Field(default=None, sa_type=BigInteger)
-    project_id: uuid.UUID = Field(foreign_key="projectlist.id") 
 
 # === Detal Eco Retreat ===
 class DetalEcoRetreatBase(SQLModel):
-    building: str 
-    picture: Optional[str] = None 
-    description_vi: Optional[str] = None 
-    description_en: Optional[str] = None 
+    port: int = Field(foreign_key="ecopark.port", index=True)
+
+    picture: str
+    description_vi: Optional[str] = None
+    description_en: Optional[str] = None
 
 class DetalEcoRetreatCreate(DetalEcoRetreatBase):
-    pass
+    port: int
 
-class DetalEcoRetreatUpdate(DetalEcoRetreatBase):
-    building: Optional[str] = None
+class DetalEcoRetreatUpdate(SQLModel):
+    port: Optional[int] = None 
     picture: Optional[str] = None
     description_vi: Optional[str] = None
     description_en: Optional[str] = None
 
-class DetalEcoRetreat(SQLModel, table=True):
+class DetalEcoRetreat(DetalEcoRetreatBase, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     
 
 class DetalEcoRetreatPublic(SQLModel):
     id: uuid.UUID
-    building: str
+    port: int
     picture: Optional[str] = None
     description: Optional[str] = None
     image_url: Optional[str] = None
 
-class DetalImageUploadData(BaseModel):
-    pass

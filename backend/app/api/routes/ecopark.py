@@ -1,14 +1,16 @@
+import io
+import logging
 from typing import Annotated, Any, Dict, List, Optional
 from uuid import UUID
 import uuid
 
 import pandas as pd
-from fastapi import APIRouter, Form, Path, UploadFile, File, Depends, HTTPException, Query, status, Request
-from sqlalchemy import func
+from fastapi import APIRouter, Form, Path, UploadFile, File, Depends, HTTPException, Query, logger, status, Request
+from sqlalchemy import func, delete
 from sqlmodel import select
 
 from app import crud
-from app.models import DetalEcoRetreatCreate, DetalEcoRetreatPublic, DetalEcoRetreatUpdate, Ecopark, EcoparkCreate, EcoparkUpdate, EcoparkPublic
+from app.models import DetalEcoRetreat, DetalEcoRetreatCreate, DetalEcoRetreatPublic, DetalEcoRetreatUpdate, Ecopark, EcoparkCreate, EcoparkUpdate, EcoparkPublic
 from app.api.deps import get_current_user, SessionDep, verify_rank_in_project
 from app import crud
 from app.api import deps
@@ -29,6 +31,9 @@ from app.api.deps import (
     verify_system_rank_in
 )
 
+logger = logging.getLogger(__name__)
+
+
 ECO_PARK_TOPIC_ONE = 'ecopark/192.168.100.101/request/one'
 ECO_PARK_TOPIC_ALL = 'ecopark/192.168.100.101/request/all'
 ECO_PARK_TOPIC_EFF = 'ecopark/192.168.100.101/request/eff'
@@ -38,6 +43,38 @@ STATIC_URL_PREFIX = "/api/v1/static"
 
 router = APIRouter(prefix="/ecopark", tags=["ecopark"])
 
+# --- CÁCH CHUẨN ĐỂ XÁC ĐỊNH ĐƯỜNG DẪN VẬT LÝ TUYỆT ĐỐI ---
+# Đi từ vị trí của file ecopark.py
+# PPath(__file__).resolve() là đường dẫn tuyệt đối đến ecopark.py
+# .parent là thư mục cha (backend/app/api/routes/)
+# .parent.parent là thư mục cha của thư mục cha (backend/app/api/)
+# .parent.parent.parent là thư mục cha của thư mục cha của thư mục cha (backend/app/)
+APP_ROOT_DIR = PPath(__file__).resolve().parent.parent.parent # Đường dẫn đến thư mục 'app'
+
+# Đường dẫn vật lý đến thư mục 'static' trong thư mục 'app'
+# Ví dụ: backend/app/static/
+PHYSICAL_STATIC_DIR = APP_ROOT_DIR / "static"
+
+# Đường dẫn vật lý đầy đủ đến thư mục đích cuối cùng: backend/app/static/EcoRetreat/CHITIET/
+ECO_RETREAT_DETAIL_UPLOAD_DIR = PHYSICAL_STATIC_DIR / "EcoRetreat" / "CHITIET"
+
+
+# --- KIỂM TRA VÀ TẠO THƯ MỤC NẾU CHƯA TỒN TẠI ---
+try:
+    ECO_RETREAT_DETAIL_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Upload directory ensured: {ECO_RETREAT_DETAIL_UPLOAD_DIR.resolve()}")
+except Exception as e:
+    logger.critical(f"FAILED TO CREATE UPLOAD DIRECTORY '{ECO_RETREAT_DETAIL_UPLOAD_DIR.resolve()}': {e}")
+    raise RuntimeError(f"Cannot initialize upload directory: {e}")
+
+# --- ĐỊNH NGHĨA HÀM TẠO URL ẢNH (PHẢI KHỚP VỚI CẤU HÌNH MOUNT TRONG MAIN.PY) ---
+# Vì bạn mount "/api/v1/static" đến thư mục vật lý "backend/app/static"
+# thì đường dẫn con trong URL phải là từ thư mục "static" trở đi.
+def build_flat_image_detal_url(request: Request, filename: str) -> str:
+    # Tiền tố mount của bạn: "/api/v1/static"
+    # Tiếp theo là đường dẫn con bên trong thư mục 'static' nơi ảnh được lưu
+    return f"{request.url.scheme}://{request.url.netloc}/api/v1/static/EcoRetreat/CHITIET/{filename}"
+
 
 def build_flat_image_url(request: Request, picture_name: Optional[str]) -> Optional[str]:
     if not picture_name:
@@ -46,69 +83,104 @@ def build_flat_image_url(request: Request, picture_name: Optional[str]) -> Optio
     return f"{base}{STATIC_URL_PREFIX}/{PROJECT_FOLDER}/{picture_name}.png"
 
 
-@router.delete("/{ecopark_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(get_current_active_superuser)])
-def delete_ecopark(
-    *,
-    session: SessionDep,
-    ecopark_id: int,
-) -> None:
-    db_ecopark = crud.get_ecopark(session, ecopark_id)
-    if not db_ecopark:
-        raise HTTPException(status_code=404, detail="Không tìm thấy ecopark")
-    crud.delete_ecopark(session, db_ecopark)
-
-
 @router.post("/{project_id}/upload", response_model=dict, dependencies=[Depends(get_current_active_superuser)],)
 def upload_excel(
     *,
     session: SessionDep,
-    project_id: UUID = Path(...),
+    project_id: UUID = Path(..., description="ID của dự án (chỉ dùng cho mục đích định tuyến/ủy quyền, không lưu vào Ecopark)"),
     file: UploadFile = File(...),
-) -> dict:
+) -> Dict[str, Any]:
+    # 1. Kiểm tra định dạng file
     if not file.filename.endswith(".xlsx"):
-        raise HTTPException(status_code=400, detail="Chỉ hỗ trợ .xlsx")
+        raise HTTPException(status_code=400, detail="Chỉ hỗ trợ file định dạng .xlsx")
 
-    df = pd.read_excel(file.file)
+    # 2. Đọc file Excel từ sheet "ECO PARK"
+    try:
+        # THAY ĐỔI TẠI ĐÂY: Thêm sheet_name='ECO PARK'
+        df = pd.read_excel(file.file, sheet_name='ECO PARK')
+        
+        # Đảm bảo cột 'port' tồn tại trong Excel
+        if 'port' not in df.columns:
+            raise HTTPException(status_code=400, detail="Sheet 'ECO PARK' trong file Excel phải chứa cột 'port'.")
+    except ValueError as ve:
+        # Bắt lỗi nếu sheet 'ECO PARK' không tồn tại
+        raise HTTPException(status_code=400, detail=f"Không tìm thấy sheet 'ECO PARK' trong file Excel. Vui lòng kiểm tra tên sheet: {ve}")
+    except Exception as e:
+        # Bắt các lỗi chung khi đọc file (ví dụ: file bị hỏng, định dạng sai)
+        raise HTTPException(status_code=400, detail=f"Không thể đọc file Excel. Vui lòng kiểm tra định dạng và nội dung: {e}")
 
-    for _, row in df.iterrows():
+    processed_count = 0
+    failed_count = 0
+    errors = []
+
+    # 3. Duyệt qua từng hàng và xử lý
+    for index, row in df.iterrows():
+        row_number_in_excel = index + 2 # +2 để tính hàng header và index 0 của pandas thành số hàng trong Excel
+        
         try:
-            row_id = int(row["id"]) if not pd.isna(row["id"]) else None
+            row_port: Optional[int] = None
+            if "port" in row and not pd.isna(row["port"]):
+                try:
+                    row_port = int(row["port"])
+                except ValueError:
+                    errors.append(f"Hàng {row_number_in_excel}: Cột 'port' ('{row['port']}') không phải là số nguyên hợp lệ.")
+                    failed_count += 1
+                    continue
+            
+            if row_port is None:
+                errors.append(f"Hàng {row_number_in_excel}: Cột 'port' bị thiếu hoặc giá trị rỗng.")
+                failed_count += 1
+                continue
+
             ecopark_data = EcoparkCreate(
-                id=row_id,
-                project_id=project_id,
-                building_name=row.get("building_name") if not pd.isna(row.get("building_name")) else None,
-                picture_name=row.get("picture_name") if not pd.isna(row.get("picture_name")) else None,
-                building_type_vi=row.get("building_type_vi") if not pd.isna(row.get("building_type_vi")) else None,
-                building_type_en=row.get("building_type_en") if not pd.isna(row.get("building_type_en")) else None,
-                amenity_type_vi=row.get("amenity_type_vi") if not pd.isna(row.get("amenity_type_vi")) else None,
-                amenity_type_en=row.get("amenity_type_en") if not pd.isna(row.get("amenity_type_en")) else None,
-                zone_name_vi=row.get("zone_name_vi") if not pd.isna(row.get("zone_name_vi")) else None,
-                zone_name_en=row.get("zone_name_en") if not pd.isna(row.get("zone_name_en")) else None,
-                zone=row.get("zone") if not pd.isna(row.get("zone")) else None,
-                amenity=row.get("amenity") if not pd.isna(row.get("amenity")) else None,
-                direction_vi=row.get("direction_vi") if not pd.isna(row.get("direction_vi")) else None,
-                bedroom=row.get("bedroom") if not pd.isna(row.get("bedroom")) else None,
-                price=int(row["price"]) if not pd.isna(row.get("price")) else None,
-                status_vi=row.get("status_vi") if not pd.isna(row.get("status_vi")) else None,
-                direction_en=row.get("direction_en") if not pd.isna(row.get("direction_en")) else None,
-                status_en=row.get("status_en") if not pd.isna(row.get("status_en")) else None,
+                port=row_port,
+                building_name=row.get("building_name") if "building_name" in row and not pd.isna(row.get("building_name")) else None,
+                picture_name=row.get("picture_name") if "picture_name" in row and not pd.isna(row.get("picture_name")) else None,
+                building_type_vi=row.get("building_type_vi") if "building_type_vi" in row and not pd.isna(row.get("building_type_vi")) else None,
+                building_type_en=row.get("building_type_en") if "building_type_en" in row and not pd.isna(row.get("building_type_en")) else None,
+                amenity_type_vi=row.get("amenity_type_vi") if "amenity_type_vi" in row and not pd.isna(row.get("amenity_type_vi")) else None,
+                amenity_type_en=row.get("amenity_type_en") if "amenity_type_en" in row and not pd.isna(row.get("amenity_type_en")) else None,
+                zone_name_vi=row.get("zone_name_vi") if "zone_name_vi" in row and not pd.isna(row.get("zone_name_vi")) else None,
+                zone_name_en=row.get("zone_name_en") if "zone_name_en" in row and not pd.isna(row.get("zone_name_en")) else None,
+                zone=row.get("zone") if "zone" in row and not pd.isna(row.get("zone")) else None,
+                amenity=row.get("amenity") if "amenity" in row and not pd.isna(row.get("amenity")) else None,
+                direction_vi=row.get("direction_vi") if "direction_vi" in row and not pd.isna(row.get("direction_vi")) else None,
+                
+                bedroom=int(row["bedroom"]) if "bedroom" in row and not pd.isna(row.get("bedroom")) else None,
+                price=int(row["price"]) if "price" in row and not pd.isna(row.get("price")) else None,
+                
+                status_vi=row.get("status_vi") if "status_vi" in row and not pd.isna(row.get("status_vi")) else None,
+                direction_en=row.get("direction_en") if "direction_en" in row and not pd.isna(row.get("direction_en")) else None,
+                status_en=row.get("status_en") if "status_en" in row and not pd.isna(row.get("status_en")) else None,
+                description_vi=row.get("description_vi") if "description_vi" in row and not pd.isna(row.get("description_vi")) else None,
+                description_en=row.get("description_en") if "description_en" in row and not pd.isna(row.get("description_en")) else None,
             )
 
+            existing_ecopark = crud.get_by_port(session=session, port=row_port)
 
-            if row_id:
-                existing = crud.get_ecopark(session, row_id)
-                if existing and existing.project_id == project_id:
-                    crud.update_ecopark(session, existing, ecopark_data)
-                else:
-                    crud.create_ecopark(session, ecopark_data)
+            if existing_ecopark:
+                ecopark_update_data = EcoparkUpdate(**ecopark_data.dict(exclude={"port"}))
+                crud.update_ecopark(session=session, db_ecopark=existing_ecopark, ecopark_in=ecopark_update_data)
             else:
-                crud.create_ecopark(session, ecopark_data)
+                crud.create_ecopark(session=session, ecopark_in=ecopark_data)
+            
+            processed_count += 1
 
         except Exception as e:
-            # Có thể log e nếu cần
-            continue
+            errors.append(f"Hàng {row_number_in_excel} (Port: {row.get('port', 'N/A')}): Lỗi - {e}")
+            failed_count += 1
 
-    return {"message": "Đã xử lý file Excel thành công."}
+    if failed_count > 0:
+        return {
+            "message": f"Đã xử lý file Excel. Thành công: {processed_count}, Thất bại: {failed_count}.",
+            "errors": errors,
+            "status": "partial_success" if processed_count > 0 else "failed"
+        }
+    else:
+        return {
+            "message": f"Đã xử lý file Excel thành công. Tổng số bản ghi được xử lý: {processed_count}.",
+            "status": "success"
+        }
 
 
 @router.get(
@@ -227,7 +299,7 @@ def filter_ecopark_by_json(
             conditions.append(col == str(value))
 
     results = session.exec(query.where(*conditions)).all()
-    ids = [r.id for r in results if r.id]
+    ids = [r.port for r in results if r.port]
 
     if ids:
         publish("ecopark_topic_one", {"channels": ids, "value": 1})
@@ -238,14 +310,13 @@ def filter_ecopark_by_json(
         item_dict = r.model_dump() 
     
         processed_item = {}
-        processed_item['id'] = item_dict.get('id')
+        processed_item['port'] = item_dict.get('port')
         processed_item['building_name'] = item_dict.get('building_name')
         processed_item['picture_name'] = item_dict.get('picture_name')
         processed_item['zone'] = item_dict.get('zone')
         processed_item['amenity'] = item_dict.get('amenity')
         processed_item['bedroom'] = item_dict.get('bedroom')
         processed_item['price'] = item_dict.get('price')
-        processed_item['project_id'] = item_dict.get('project_id')
         
         for field_name in translatable_display_fields:
             chosen_value = item_dict.get(f'{field_name}_{lang}')
@@ -261,7 +332,7 @@ def filter_ecopark_by_json(
 def search_and_publish(
     session: SessionDep,
     request: Request,
-    filters: dict[str, str],
+    filters: Dict[str, str],
 ) -> List[Dict[str, Any]]:
     try:
         conditions = []
@@ -291,7 +362,7 @@ def search_and_publish(
         results = session.exec(stmt).all() 
 
         # Gửi dữ liệu MQTT nếu có kết quả
-        ids = [r.id for r in results if r.id]
+        ids = [r.port for r in results if r.port]
         if ids:
             publish(ECO_PARK_TOPIC_ONE, {"channels": ids, "value": 1})
 
@@ -320,7 +391,6 @@ def ecopark_search_by_amenity(
 ) -> Any:
     filters = {
         'amenity': amenity,
-        'project_id': str(project_id)
     }
     
     results: List[Dict[str, Any]] = search_and_publish(session, request, filters)
@@ -363,7 +433,6 @@ def ecopark_search_by_amenity_and_type(
 ) -> List[Dict[str, Any]]:
     filters = {
         f'amenity_type_{lang}': amenity_type_path,
-        'project_id': str(project_id)
     }
 
     results: List[Dict[str, Any]] = search_and_publish(session, request, filters)
@@ -403,7 +472,6 @@ def ecopark_search_by_zone(
 ) -> List[Dict[str, Any]]:
     filters = {
         'zone': zone_param, 
-        'project_id': str(project_id)
     }
 
     results: List[Dict[str, Any]] = search_and_publish(session, request, filters)
@@ -467,7 +535,6 @@ def ecopark_search_by_zone_and_name(
     filters = {
         'zone': zone_param,
         f'zone_name_{lang}': zone_name_path, 
-        'project_id': str(project_id)
     }
     results: List[Dict[str, Any]] = search_and_publish(session, request, filters)
 
@@ -514,7 +581,6 @@ def ecopark_search_by_zone_name_type(
         'zone': zone_param,
         f'zone_name_{lang}': zone_name_path,
         f'building_type_{lang}': building_type_path,
-        'project_id': str(project_id)
     }
 
     results: List[Dict[str, Any]] = search_and_publish(session, request, filters)
@@ -564,7 +630,6 @@ def ecopark_search_by_full_path(
         f'zone_name_{lang}': zone_name_path,
         f'building_type_{lang}': building_type_path,
         'building_name': building_name_param,
-        'project_id': str(project_id)
     }
 
     results: List[Dict[str, Any]] = search_and_publish(session, request, filters)
@@ -589,97 +654,122 @@ def ecopark_search_by_full_path(
     return items_for_response
 
 ##########------------- DETAL Eco Retreat------------- #####################
-STATIC_DIR = PPath("static")
-ECO_RETREAT_DETAIL_UPLOAD_DIR = STATIC_DIR / "EcoRetreat" / "CHITIET"
-# Đảm bảo thư mục tồn tại
-ECO_RETREAT_DETAIL_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-
-def build_flat_image_detal_url(request: Request, picture_name: Optional[str]) -> Optional[str]:
-    if picture_name:
-        base_url = str(request.base_url).rstrip('/')
-        return f"{base_url}/static/EcoRetreat/CHITIET/{picture_name}"
-    return None
 
 @router.put(
-    "/{building_name}/images",
+    "/{port}/add_multiple_images", # Tên endpoint gợi ý
     response_model=List[DetalEcoRetreatPublic],
-    status_code=status.HTTP_201_CREATED, 
-    summary="Tải lên và thêm nhiều hình ảnh chi tiết cho một 'building' (chỉ JPG/PNG)",
-    description="Cho phép người dùng tải lên 1 hoặc nhiều file ảnh có định dạng **JPG/JPEG** hoặc **PNG**, "
+    status_code=status.HTTP_201_CREATED,
+    summary="Tải lên và thêm nhiều hình ảnh chi tiết cho một 'building'",
+    description="Cho phép tải lên nhiều file ảnh và mô tả tương ứng. Số lượng file ảnh và số lượng mô tả (tiếng Việt/Anh) phải khớp nhau. Mô tả có thể để trống."
 )
-async def upload_and_add_detal_images_for_building(
+async def add_multiple_detal_images_for_building(
     *,
-    building_name: str = Path(..., description="Tên 'building' mà các ảnh này thuộc về (chuỗi text bất kỳ)"),
+    port: int = Path(..., description=" Căn hộ mà các ảnh này thuộc về (tương ứng với Ecopark)"), 
     session: SessionDep,
     request: Request,
     files: List[UploadFile] = File(..., description="Các file ảnh cần tải lên (chỉ JPG/JPEG và PNG)"),
-    descriptions_vi: Optional[List[str]] = Form(None, description="Danh sách mô tả tiếng Việt cho từng ảnh (theo thứ tự file)"),
-    descriptions_en: Optional[List[str]] = Form(None, description="Danh sách mô tả tiếng Anh cho từng ảnh (theo thứ tự file)"),
+    description_vi: Optional[List[str]] = Form(None, description="Danh sách mô tả tiếng Việt cho mỗi ảnh (tương ứng thứ tự)"),
+    description_en: Optional[List[str]] = Form(None, description="Danh sách mô tả tiếng Anh cho mỗi ảnh (tương ứng thứ tự)"),
     lang: str = Query("en", regex="^(vi|en)$", description="Ngôn ngữ mặc định cho mô tả trong phản hồi"),
 ) -> List[DetalEcoRetreatPublic]:
-    """
-    Xử lý việc tải lên nhiều ảnh và tạo bản ghi DetalEcoRetreat tương ứng.
-    Mỗi file ảnh sẽ được lưu trữ với một tên duy nhất (UUID) và tạo một bản ghi mới trong DB.
-    """
+    logger.info(f"Received request to upload multiple images for building: '{port}'")
+    logger.info(f"Number of files received: {len(files)}")
+
     num_files = len(files)
-    # --- Kiểm tra số lượng mô tả khớp với số lượng file ---
-    if descriptions_vi and len(descriptions_vi) != num_files:
+
+    if description_vi is None:
+        description_vi = [None] * num_files
+    if description_en is None:
+        description_en = [None] * num_files
+
+    if not (len(description_vi) == num_files and len(description_en) == num_files):
+        logger.warning("Mismatch in number of files and descriptions provided.")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Số lượng mô tả tiếng Việt không khớp với số lượng file ảnh được tải lên."
+            detail="Số lượng file ảnh, mô tả tiếng Việt và mô tả tiếng Anh phải khớp nhau."
         )
-    if descriptions_en and len(descriptions_en) != num_files:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Số lượng mô tả tiếng Anh không khớp với số lượng file ảnh được tải lên."
-        )
-    created_detals_public = []
+
+    results: List[DetalEcoRetreatPublic] = []
+    error_details = []
+
     for i, file in enumerate(files):
+        current_description_vi = description_vi[i]
+        current_description_en = description_en[i]
+
+        logger.info(f"Processing file {i+1}/{num_files}: '{file.filename}'")
+        logger.info(f"  Desc VI: '{current_description_vi}', Desc EN: '{current_description_en}'")
+
+        # --- Kiểm tra loại file ---
         allowed_mime_types = ["image/jpeg", "image/png"]
         if file.content_type not in allowed_mime_types:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Loại file không hợp lệ cho '{file.filename}'. Chỉ chấp nhận JPG/JPEG và PNG."
+            error_details.append(
+                f"File '{file.filename}' (index {i}): Loại file không hợp lệ. Chỉ chấp nhận JPG/JPEG và PNG."
             )
+            logger.warning(f"Invalid file type for '{file.filename}': {file.content_type}")
+            continue
+
         # --- Tạo tên file duy nhất và đường dẫn lưu trữ ---
-        file_extension = PPath(file.filename).suffix 
-        unique_filename = f"{uuid.uuid4()}{file_extension}" 
+        file_extension = PPath(file.filename).suffix
+        unique_filename = f"{uuid.uuid4()}{file_extension}"
         file_path = ECO_RETREAT_DETAIL_UPLOAD_DIR / unique_filename
+
+        logger.info(f"  Generated unique filename: {unique_filename}")
+        logger.info(f"  Attempting to save file to: {file_path.resolve()}")
 
         # --- Lưu file vào hệ thống ---
         try:
-            ECO_RETREAT_DETAIL_UPLOAD_DIR.mkdir(parents=True, exist_ok=True) 
             with open(file_path, "wb") as buffer:
-                content = await file.read() 
+                content = await file.read()
                 buffer.write(content)
+            logger.info(f"  File '{unique_filename}' saved SUCCESSFULLY to '{file_path.resolve()}'.")
         except Exception as e:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Không thể lưu file '{file.filename}' do lỗi hệ thống: {e}"
+            error_details.append(
+                f"File '{file.filename}' (index {i}): Không thể lưu file do lỗi hệ thống: {e}"
             )
+            logger.exception(f"  FAILED to save file '{file.filename}' to '{file_path.resolve()}'. An error occurred:")
+            continue
 
-        description_vi = descriptions_vi[i] if descriptions_vi and i < len(descriptions_vi) else None
-        description_en = descriptions_en[i] if descriptions_en and i < len(descriptions_en) else None
-        
         detal_create_data = DetalEcoRetreatCreate(
-            building=building_name, 
-            picture=unique_filename, 
-            description_vi=description_vi,
-            description_en=description_en
+            port=port, 
+            picture=unique_filename,
+            description_vi=current_description_vi,
+            description_en=current_description_en
         )
-        db_detal = crud.create_detal_eco_retreat_record(session, detal_create_data)
+        logger.info(f"  DetalEcoRetreatCreate object prepared with picture='{unique_filename}'.")
+        try:
+            db_detal = crud.create_detal_eco_retreat_record(session, detal_create_data)
+            logger.info(f"  Database record created successfully with ID: {db_detal.id}, picture name: {db_detal.picture}")
 
-        detal_public = DetalEcoRetreatPublic.model_validate(db_detal)
-        detal_public.image_url = build_flat_image_detal_url(request, db_detal.picture) 
+            # --- Chuẩn bị phản hồi cho từng ảnh ---
+            detal_public = DetalEcoRetreatPublic.model_validate(db_detal)
+            detal_public.image_url = build_flat_image_detal_url(request, db_detal.picture)
+            logger.info(f"  Generated image URL for response: {detal_public.image_url}")
 
-        chosen_description = getattr(db_detal, f'description_{lang}', None)
-        if chosen_description is None:
-            chosen_description = db_detal.description_en 
-        detal_public.description = chosen_description
+            chosen_description = getattr(db_detal, f'description_{lang}', None)
+            if chosen_description is None:
+                chosen_description = db_detal.description_en
 
-        created_detals_public.append(detal_public)
+            detal_public.description = chosen_description
+            results.append(detal_public)
 
-    return created_detals_public
+        except Exception as e:
+            error_details.append(
+                f"File '{file.filename}' (index {i}): Lỗi khi tạo bản ghi database: {e}"
+            )
+            logger.exception(f"  FAILED to create database record for '{unique_filename}'. An error occurred:")
+            continue
+
+    if error_details:
+        logger.error(f"Completed processing with {len(error_details)} errors and {len(results)} successes.")
+        if not results: # Nếu không có ảnh nào được xử lý thành công
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Không có ảnh nào được xử lý thành công. Chi tiết lỗi: {error_details}")
+        else:
+            logger.warning(f"Some files failed to process. Details: {error_details}")
+
+    logger.info(f"API request finished successfully. Processed {len(results)} files.")
+    return results
+
+
 
 @router.get(
     "/{detal_id}", 
@@ -712,7 +802,7 @@ def read_detal_image_by_id(
 
 
 @router.get(
-    "/by-building/{building_name}", 
+    "/by-port/{port}", 
     response_model=List[DetalEcoRetreatPublic],
     summary="Đọc tất cả hình ảnh chi tiết cho một 'building'"
 )
@@ -720,7 +810,7 @@ def read_all_detal_images_for_building(
     *,
     session: SessionDep,
     request: Request,
-    building_name: str = Path(..., description="Tên 'building' để lọc hình ảnh"),
+    port: int = Path(..., description="Số 'port' để lọc hình ảnh"),
     skip: int = 0,
     limit: int = 100,
     lang: str = Query("en", regex="^(vi|en)$", description="Mã ngôn ngữ cho mô tả"),
@@ -728,7 +818,7 @@ def read_all_detal_images_for_building(
     """
     Truy xuất danh sách tất cả các hình ảnh chi tiết thuộc về một 'building' cụ thể.
     """
-    db_detals, total = crud.get_all_detal_eco_retreats_by_building(session, building_name=building_name, skip=skip, limit=limit)
+    db_detals, total = crud.get_all_detal_eco_retreats_by_building(session, port=port, skip=skip, limit=limit)
     
     response_list = []
     for db_detal in db_detals:
@@ -760,7 +850,7 @@ async def update_detal_image_by_id(
     request: Request,
     detal_id: uuid.UUID = Path(..., description="ID của hình ảnh chi tiết cần cập nhật"),
     file: Optional[UploadFile] = File(None, description="File ảnh mới (JPG/PNG) để thay thế ảnh hiện có"),
-    building: Optional[str] = Form(None, description="Tên 'building' mới cho ảnh (tùy chọn)"),
+    port: Optional[int] = Form(None, description="Số 'port' mới cho ảnh (tùy chọn)"),
     description_vi: Optional[str] = Form(None, description="Mô tả tiếng Việt mới cho ảnh (tùy chọn)"),
     description_en: Optional[str] = Form(None, description="Mô tả tiếng Anh mới cho ảnh (tùy chọn)"),
     lang: str = Query("en", regex="^(vi|en)$", description="Mã ngôn ngữ cho mô tả trong phản hồi"),
@@ -773,7 +863,7 @@ async def update_detal_image_by_id(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hình ảnh chi tiết không tìm thấy.")
 
     detal_update_data = DetalEcoRetreatUpdate(
-        building=building,
+        port=port,
         description_vi=description_vi,
         description_en=description_en
     )
@@ -795,7 +885,6 @@ async def update_detal_image_by_id(
         new_file_path = ECO_RETREAT_DETAIL_UPLOAD_DIR / new_picture_name
 
         try:
-            ECO_RETREAT_DETAIL_UPLOAD_DIR.mkdir(parents=True, exist_ok=True) 
             with open(new_file_path, "wb") as buffer:
                 content = await file.read()
                 buffer.write(content)
@@ -874,3 +963,52 @@ def delete_detal_image_by_id(
     #             print(f"Lỗi khi xóa file {file_to_delete}: {e}") # Log lỗi, không raise
     
     return {"message": "Hình ảnh chi tiết đã được xóa thành công."}
+
+@router.delete(
+    "/clear-all-detal-eco-retreat-records",
+    status_code=status.HTTP_200_OK,
+    summary="Xóa TẤT CẢ các bản ghi DetalEcoRetreat (KHÔNG xóa file ảnh vật lý)",
+    description="**Cảnh báo: Hành động này sẽ xóa vĩnh viễn tất cả các bản ghi trong bảng 'detalecoretreat' khỏi cơ sở dữ liệu. Các file ảnh vật lý trên hệ thống file sẽ KHÔNG bị xóa.** Chỉ dành cho superuser.",
+    response_model=Dict[str, Any],
+    dependencies=[Depends(get_current_active_superuser)]
+)
+async def clear_all_detal_eco_retreat_records(
+    session: SessionDep,
+) -> Dict[str, Any]:
+    logger.warning("Attempting to delete ALL DetalEcoRetreat records (files will NOT be deleted).")
+
+    try:
+        # Lấy số lượng bản ghi hiện có trước khi xóa (tùy chọn, để báo cáo)
+        count_statement = select(DetalEcoRetreat)
+        initial_count = len(session.exec(count_statement).all())
+
+        if initial_count == 0:
+            logger.info("No DetalEcoRetreat records found to delete.")
+            return {
+                "message": "Không có bản ghi DetalEcoRetreat nào để xóa.",
+                "deleted_db_records": 0
+            }
+
+        # Xóa tất cả các bản ghi trong bảng DetalEcoRetreat
+        # Sử dụng câu lệnh DELETE trực tiếp
+        delete_statement = delete(DetalEcoRetreat)
+        result = session.exec(delete_statement)
+        deleted_rows = result.rowcount # Lấy số lượng hàng bị ảnh hưởng (số lượng bản ghi đã xóa)
+
+        session.commit() # Commit giao dịch
+
+        logger.info(f"Finished clearing DetalEcoRetreat data. Deleted {deleted_rows} DB records.")
+
+        return {
+            "message": "Đã xóa thành công tất cả các bản ghi DetalEcoRetreat.",
+            "deleted_db_records": deleted_rows
+        }
+
+    except Exception as e:
+        session.rollback() # Rollback nếu có bất kỳ lỗi nào xảy ra trong quá trình
+        logger.exception("An error occurred while clearing DetalEcoRetreat records:")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Lỗi hệ thống khi xóa bản ghi DetalEcoRetreat: {e}."
+        )
+
