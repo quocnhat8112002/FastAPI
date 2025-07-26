@@ -10,7 +10,7 @@ from sqlalchemy import func, delete
 from sqlmodel import select
 
 from app import crud
-from app.models import DetalEcoRetreat, DetalEcoRetreatCreate, DetalEcoRetreatPublic, DetalEcoRetreatUpdate, Ecopark, EcoparkCreate, EcoparkUpdate, EcoparkPublic
+from app.models import DetalEcoRetreat, DetalEcoRetreatCreate, DetalEcoRetreatPublic, DetalEcoRetreatResponse, DetalEcoRetreatUpdate, Ecopark, EcoparkCreate, EcoparkUpdate, EcoparkPublic
 from app.api.deps import get_current_user, SessionDep, verify_rank_in_project
 from app import crud
 from app.api import deps
@@ -656,7 +656,7 @@ def ecopark_search_by_full_path(
 ##########------------- DETAL Eco Retreat------------- #####################
 
 @router.put(
-    "/{port}/add_multiple_images", # Tên endpoint gợi ý
+    "/add_multiple_images/{port}", # Tên endpoint gợi ý
     response_model=List[DetalEcoRetreatPublic],
     status_code=status.HTTP_201_CREATED,
     summary="Tải lên và thêm nhiều hình ảnh chi tiết cho một 'building'",
@@ -772,7 +772,7 @@ async def add_multiple_detal_images_for_building(
 
 
 @router.get(
-    "/{detal_id}", 
+    "/image/{detal_id}", 
     response_model=DetalEcoRetreatPublic,
     summary="Đọc thông tin một hình ảnh chi tiết theo ID"
 )
@@ -802,41 +802,41 @@ def read_detal_image_by_id(
 
 
 @router.get(
-    "/by-port/{port}", 
-    response_model=List[DetalEcoRetreatPublic],
-    summary="Đọc tất cả hình ảnh chi tiết cho một 'building'"
+    "/by_ports", # Đổi URL để phản ánh việc tìm kiếm theo NHIỀU ports
+    response_model=DetalEcoRetreatResponse,
+    summary="Đọc tất cả hình ảnh chi tiết cho nhiều 'port' cụ thể" # Cập nhật summary
 )
-def read_all_detal_images_for_building(
+def read_detal_images_by_ports( # Đổi tên hàm cho rõ ràng
     *,
     session: SessionDep,
     request: Request,
-    port: int = Path(..., description="Số 'port' để lọc hình ảnh"),
+    ports: List[int] = Query(..., description="Danh sách các số 'port' để lọc hình ảnh. Ví dụ: ?ports=8080&ports=8081"), # Thay đổi từ Path sang Query và List[int]
     skip: int = 0,
     limit: int = 100,
     lang: str = Query("en", regex="^(vi|en)$", description="Mã ngôn ngữ cho mô tả"),
-) -> List[DetalEcoRetreatPublic]:
+) -> DetalEcoRetreatResponse:
     """
-    Truy xuất danh sách tất cả các hình ảnh chi tiết thuộc về một 'building' cụ thể.
+    Truy xuất danh sách tất cả các hình ảnh chi tiết thuộc về nhiều 'port' cụ thể.
     """
-    db_detals, total = crud.get_all_detal_eco_retreats_by_building(session, port=port, skip=skip, limit=limit)
+    # Gọi hàm CRUD mới để lấy dữ liệu theo danh sách ports
+    db_detals, total = crud.get_all_detal_eco_retreats_by_ports(session=session, ports=ports, skip=skip, limit=limit)
     
-    response_list = []
+    response_items = [] 
     for db_detal in db_detals:
         detal_public = DetalEcoRetreatPublic.model_validate(db_detal)
         detal_public.image_url = build_flat_image_detal_url(request, db_detal.picture)
 
         chosen_description = getattr(db_detal, f'description_{lang}', None)
         if chosen_description is None:
-            chosen_description = db_detal.description_en
+            chosen_description = db_detal.description_en # Fallback về tiếng Anh
         detal_public.description = chosen_description
         
-        response_list.append(detal_public)
-    
-    return response_list # Bạn có thể thêm "total" vào header hoặc trong một đối tượng wrapper nếu cần
+        response_items.append(detal_public)
 
+    return DetalEcoRetreatResponse(items=response_items, total=total)
 
 @router.put(
-    "/{detal_id}", 
+    "/update_image/{detal_id}", 
     response_model=DetalEcoRetreatPublic,
     summary="Cập nhật thông tin và/hoặc thay thế ảnh của một hình ảnh chi tiết",
     description="Cập nhật các trường (mô tả, tên building) cho một bản ghi hình ảnh DetalEcoRetreat cụ thể. "
@@ -850,7 +850,6 @@ async def update_detal_image_by_id(
     request: Request,
     detal_id: uuid.UUID = Path(..., description="ID của hình ảnh chi tiết cần cập nhật"),
     file: Optional[UploadFile] = File(None, description="File ảnh mới (JPG/PNG) để thay thế ảnh hiện có"),
-    port: Optional[int] = Form(None, description="Số 'port' mới cho ảnh (tùy chọn)"),
     description_vi: Optional[str] = Form(None, description="Mô tả tiếng Việt mới cho ảnh (tùy chọn)"),
     description_en: Optional[str] = Form(None, description="Mô tả tiếng Anh mới cho ảnh (tùy chọn)"),
     lang: str = Query("en", regex="^(vi|en)$", description="Mã ngôn ngữ cho mô tả trong phản hồi"),
@@ -862,11 +861,12 @@ async def update_detal_image_by_id(
     if not db_detal:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hình ảnh chi tiết không tìm thấy.")
 
-    detal_update_data = DetalEcoRetreatUpdate(
-        port=port,
-        description_vi=description_vi,
-        description_en=description_en
-    )
+    detal_update_data = {} 
+
+    if description_vi is not None: # Nếu mô tả tiếng Việt được cung cấp
+        detal_update_data["description_vi"] = description_vi
+    if description_en is not None: # Nếu mô tả tiếng Anh được cung cấp
+        detal_update_data["description_en"] = description_en
 
     old_picture_name = db_detal.picture
     new_picture_name = None
@@ -895,7 +895,7 @@ async def update_detal_image_by_id(
             )
         
         # 4. Cập nhật tên ảnh mới vào dữ liệu update
-        detal_update_data.picture = new_picture_name
+        detal_update_data["picture"] = new_picture_name
         # 5. Xóa file ảnh cũ nếu có
         if old_picture_name:
             old_file_path = ECO_RETREAT_DETAIL_UPLOAD_DIR / old_picture_name
@@ -924,45 +924,81 @@ async def update_detal_image_by_id(
     detal_public = DetalEcoRetreatPublic.model_validate(db_detal)
     detal_public.image_url = build_flat_image_detal_url(request, db_detal.picture)
     
+    # Lấy mô tả theo ngôn ngữ được yêu cầu
     chosen_description = getattr(db_detal, f'description_{lang}', None)
     if chosen_description is None:
-        chosen_description = db_detal.description_en
+        chosen_description = db_detal.description_en # Fallback về tiếng Anh nếu ngôn ngữ yêu cầu không có
+
     detal_public.description = chosen_description
 
     return detal_public
 
-
-
 @router.delete(
-    "/{detal_id}", 
+    "/bulk_delete", # Endpoint mới để xóa nhiều
     response_model=Dict[str, str],
-    summary="Xóa một hình ảnh chi tiết theo ID"
+    summary="Xóa nhiều hình ảnh chi tiết theo ID",
+    description="Xóa nhiều bản ghi hình ảnh DetalEcoRetreat và các file ảnh vật lý liên quan khỏi cơ sở dữ liệu."
 )
-def delete_detal_image_by_id(
+def bulk_delete_detal_images_by_ids(
     *,
     session: SessionDep,
-    detal_id: uuid.UUID = Path(..., description="ID của hình ảnh chi tiết cần xóa"),
+    detal_ids: List[uuid.UUID] = Query(..., description="Danh sách các ID của hình ảnh chi tiết cần xóa"),
 ) -> Dict[str, str]:
     """
-    Xóa một bản ghi hình ảnh DetalEcoRetreat khỏi cơ sở dữ liệu.
-    Lưu ý: API này không tự động xóa file ảnh vật lý trên server.
+    Xóa nhiều bản ghi DetalEcoRetreat cùng lúc, bao gồm việc xóa các file ảnh vật lý.
     """
-    db_detal = crud.get_detal_eco_retreat_by_id(session, detal_id)
-    if not db_detal:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hình ảnh chi tiết không tìm thấy.")
+    if not detal_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Vui lòng cung cấp ít nhất một ID để xóa."
+        )
 
-    crud.delete_detal_eco_retreat_record(session, db_detal)
+    # Lấy tất cả các bản ghi từ DB dựa trên danh sách ID được cung cấp
+    db_detals_to_delete = crud.get_detal_eco_retreats_by_ids(session, detal_ids)
     
-    # Tùy chọn: Xóa file vật lý. Hãy cẩn thận khi triển khai.
-    # if db_detal.picture:
-    #     file_to_delete = ECO_RETREAT_DETAIL_UPLOAD_DIR / db_detal.picture
-    #     if file_to_delete.is_file():
-    #         try:
-    #             os.remove(file_to_delete)
-    #         except OSError as e:
-    #             print(f"Lỗi khi xóa file {file_to_delete}: {e}") # Log lỗi, không raise
-    
-    return {"message": "Hình ảnh chi tiết đã được xóa thành công."}
+    # Kiểm tra xem có ID nào không tìm thấy không
+    found_ids = {str(d.id) for d in db_detals_to_delete}
+    missing_ids = [str(id_) for id_ in detal_ids if str(id_) not in found_ids]
+
+    if missing_ids:
+        # Nếu có ID không tìm thấy, bạn có thể chọn:
+        # 1. Báo lỗi và không xóa gì cả.
+        # 2. Xóa những cái tìm thấy và báo lỗi về những cái không tìm thấy.
+        # Ở đây, tôi chọn phương án 2: vẫn tiếp tục xóa những cái tìm thấy và báo cáo những cái bị thiếu.
+        print(f"Cảnh báo: Không tìm thấy các ID sau để xóa: {missing_ids}")
+        # Bạn có thể trả về một thông báo chi tiết hơn nếu muốn
+
+    pictures_to_delete = [d.picture for d in db_detals_to_delete if d.picture]
+
+    # Xóa các bản ghi khỏi cơ sở dữ liệu
+    # Hàm CRUD mới sẽ đảm bảo chỉ xóa những bản ghi đã tìm thấy.
+    deleted_count = crud.delete_detal_eco_retreat_records_by_ids(session, [d.id for d in db_detals_to_delete])
+
+    # Xóa các file vật lý
+    files_deleted_count = 0
+    files_failed_to_delete = []
+
+    for picture_name in pictures_to_delete:
+        file_path_to_delete = ECO_RETREAT_DETAIL_UPLOAD_DIR / picture_name
+        if file_path_to_delete.is_file():
+            try:
+                os.remove(file_path_to_delete)
+                files_deleted_count += 1
+                print(f"Đã xóa file vật lý: {file_path_to_delete}")
+            except OSError as e:
+                print(f"Lỗi khi xóa file vật lý '{file_path_to_delete}': {e}")
+                files_failed_to_delete.append(picture_name)
+        else:
+            print(f"Cảnh báo: File '{file_path_to_delete}' không tồn tại để xóa.")
+
+    message = f"Đã xóa thành công {deleted_count} bản ghi hình ảnh chi tiết."
+    if missing_ids:
+        message += f" Các ID không tìm thấy: {', '.join(missing_ids)}."
+    if files_failed_to_delete:
+        message += f" Không thể xóa được {len(files_failed_to_delete)} file ảnh: {', '.join(files_failed_to_delete)}."
+
+    return {"message": message}
+
 
 @router.delete(
     "/clear-all-detal-eco-retreat-records",

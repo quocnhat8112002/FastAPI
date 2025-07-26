@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, EmailStr
 from sqlmodel import BigInteger, SQLModel, Field
@@ -311,10 +311,9 @@ class DetalEcoRetreatCreate(DetalEcoRetreatBase):
     port: int
 
 class DetalEcoRetreatUpdate(SQLModel):
-    port: Optional[int] = None 
-    picture: Optional[str] = None
-    description_vi: Optional[str] = None
-    description_en: Optional[str] = None
+    picture: Optional[str] 
+    description_vi: Optional[str] 
+    description_en: Optional[str] 
 
 class DetalEcoRetreat(DetalEcoRetreatBase, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
@@ -327,3 +326,10 @@ class DetalEcoRetreatPublic(SQLModel):
     description: Optional[str] = None
     image_url: Optional[str] = None
 
+class DetalEcoRetreatResponse(BaseModel):
+    """
+    Schema phản hồi cho danh sách các ảnh chi tiết có phân trang.
+    Bao gồm danh sách các đối tượng ảnh và tổng số lượng.
+    """
+    items: List[DetalEcoRetreatPublic]  
+    total: int                         

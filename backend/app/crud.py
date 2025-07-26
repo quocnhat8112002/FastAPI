@@ -1,10 +1,10 @@
 import uuid
-from typing import Any, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime
 
 from fastapi import HTTPException
 from sqlalchemy import  func
-from sqlmodel import Session, select, col
+from sqlmodel import Session, delete, select, col
 
 from app.core.security import get_password_hash, verify_password
 from app.models import (
@@ -276,6 +276,15 @@ def get_detal_eco_retreat_by_id(session: Session, detal_id: uuid.UUID) -> Option
     """
     return session.get(DetalEcoRetreat, detal_id)
 
+def get_detal_eco_retreats_by_ids(session: Session, detal_ids: List[uuid.UUID]) -> List[DetalEcoRetreat]:
+    """
+    Lấy danh sách các bản ghi DetalEcoRetreat dựa trên danh sách ID.
+    """
+    if not detal_ids:
+        return []
+    statement = select(DetalEcoRetreat).where(DetalEcoRetreat.id.in_(detal_ids))
+    return session.exec(statement).all()
+
 def get_detal_by_port_and_picture(session: Session, port: int, picture_name: str) -> Optional[DetalEcoRetreat]:
     statement = select(DetalEcoRetreat).where(
         DetalEcoRetreat.port == port,
@@ -284,25 +293,31 @@ def get_detal_by_port_and_picture(session: Session, port: int, picture_name: str
     result = session.exec(statement).first()
     return result
 
-def get_all_detal_eco_retreats_by_building(
-    session: Session,
-    port: Optional[str] = None,
-    skip: int = 0,
+def get_all_detal_eco_retreats_by_ports(
+    session: Session, 
+    ports: List[int], # Nhận một danh sách các số port
+    skip: int = 0, 
     limit: int = 100
 ) -> Tuple[List[DetalEcoRetreat], int]:
-    statement = select(DetalEcoRetreat)
-    count_stmt = select(func.count(DetalEcoRetreat.id))
+    """
+    Truy xuất danh sách tất cả các hình ảnh chi tiết thuộc về một hoặc nhiều 'port' cụ thể.
+    """
+    if not ports:
+        return [], 0 # Nếu danh sách ports rỗng, trả về kết quả rỗng
 
-    if port is not None:
-        statement = statement.where(DetalEcoRetreat.port == port)
-        count_stmt = count_stmt.where(DetalEcoRetreat.port == port)
+    # Xây dựng câu lệnh SELECT để lọc theo nhiều ports bằng toán tử IN
+    statement = select(DetalEcoRetreat).where(DetalEcoRetreat.port.in_(ports))
+    
+    # Lấy tổng số lượng (để phân trang)
+    count_statement = select(func.count()).where(DetalEcoRetreat.port.in_(ports))
+    total_count = session.exec(count_statement).one()
 
+    # Áp dụng skip và limit
     statement = statement.offset(skip).limit(limit)
     
-    results = session.exec(statement).all()
-    total = session.exec(count_stmt).scalar_one()
+    db_detals = session.exec(statement).all()
+    return db_detals, total_count
 
-    return results, total
 
 
 def create_detal_eco_retreat_record(session: Session, detal_in: DetalEcoRetreatCreate) -> DetalEcoRetreat:
@@ -318,31 +333,27 @@ def create_detal_eco_retreat_record(session: Session, detal_in: DetalEcoRetreatC
     return detal_obj
 
 
-def update_detal_eco_retreat_record(session: Session, db_detal: DetalEcoRetreat, detal_in: DetalEcoRetreatUpdate) -> DetalEcoRetreat:
+def update_detal_eco_retreat_record(
+    session: Session, 
+    db_detal: DetalEcoRetreat, 
+    update_data: Dict[str, Any] # <-- Hàm này giờ nhận một dictionary
+) -> DetalEcoRetreat:
     """
-    Cập nhật một bản ghi DetalEcoRetreat hiện có.
+    Cập nhật một bản ghi DetalEcoRetreat hiện có từ một dictionary update_data.
+    Chỉ cập nhật những trường có trong update_data.
     Yêu cầu ít nhất một trong description_vi hoặc description_en phải có giá trị (sau khi cập nhật).
     """
-    update_data = detal_in.model_dump(exclude_unset=True)
+    # sqlmodel_update sẽ chỉ cập nhật các trường có trong update_data.
+    # Nếu một trường không có trong update_data, nó sẽ không bị thay đổi.
+    db_detal.sqlmodel_update(update_data)
+    
+    # Tạo bản sao tạm thời để kiểm tra sau khi áp dụng update_data
+    temp_detal = db_detal.model_copy() 
 
-    # Áp dụng các cập nhật vào đối tượng db_detal trước khi kiểm tra
-    # Điều này quan trọng để kiểm tra trạng thái SAU KHI update
-    temp_detal = DetalEcoRetreat.model_validate(db_detal) # Tạo bản sao tạm thời để kiểm tra
-    if "port" in update_data:
-        temp_detal.port = update_data["port"]
-    if "picture" in update_data:
-        temp_detal.picture = update_data["picture"]
-    if "description_vi" in update_data:
-        temp_detal.description_vi = update_data["description_vi"]
-    if "description_en" in update_data:
-        temp_detal.description_en = update_data["description_en"]
-
-    # KIỂM TRA MỚI: Đảm bảo ít nhất một mô tả được cung cấp sau khi cập nhật
+    # KIỂM TRA MÔ TẢ: Đảm bảo ít nhất một mô tả được cung cấp sau khi cập nhật
     if not temp_detal.description_vi and not temp_detal.description_en:
         raise ValueError("Sau khi cập nhật, phải có ít nhất một mô tả (tiếng Việt hoặc tiếng Anh).")
 
-    # Nếu pass kiểm tra, thực hiện cập nhật thực tế
-    db_detal.sqlmodel_update(update_data)
     session.add(db_detal)
     session.commit()
     session.refresh(db_detal)
@@ -356,3 +367,18 @@ def delete_detal_eco_retreat_record(session: Session, db_detal: DetalEcoRetreat)
     session.delete(db_detal)
     session.commit()
     return db_detal
+
+def delete_detal_eco_retreat_records_by_ids(session: Session, detal_ids: List[uuid.UUID]) -> int:
+    """
+    Xóa nhiều bản ghi DetalEcoRetreat dựa trên danh sách ID.
+    Trả về số lượng bản ghi đã xóa.
+    """
+    if not detal_ids:
+        return 0
+    
+    # Sử dụng lệnh DELETE để xóa hàng loạt
+    statement = delete(DetalEcoRetreat).where(DetalEcoRetreat.id.in_(detal_ids))
+    
+    result = session.exec(statement)
+    session.commit()
+    return result.rowcount # Trả về số dòng đã bị ảnh hưởng (số bản ghi đã xóa)
