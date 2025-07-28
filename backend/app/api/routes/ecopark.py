@@ -804,13 +804,13 @@ def read_detal_image_by_id(
 @router.get(
     "/by_ports", # Đổi URL để phản ánh việc tìm kiếm theo NHIỀU ports
     response_model=DetalEcoRetreatResponse,
-    summary="Đọc tất cả hình ảnh chi tiết cho nhiều 'port' cụ thể" # Cập nhật summary
+    summary="Đọc tất cả hình ảnh chi tiết cho nhiều 'port' cụ thể của 1 building_name" # Cập nhật summary
 )
 def read_detal_images_by_ports( # Đổi tên hàm cho rõ ràng
     *,
     session: SessionDep,
     request: Request,
-    ports: List[int] = Query(..., description="Danh sách các số 'port' để lọc hình ảnh. Ví dụ: ?ports=8080&ports=8081"), # Thay đổi từ Path sang Query và List[int]
+    port: List[int] = Query(..., description="Danh sách các số 'port' để lọc hình ảnh. Ví dụ: ?ports=8080&ports=8081"), # Thay đổi từ Path sang Query và List[int]
     skip: int = 0,
     limit: int = 100,
     lang: str = Query("en", regex="^(vi|en)$", description="Mã ngôn ngữ cho mô tả"),
@@ -819,7 +819,7 @@ def read_detal_images_by_ports( # Đổi tên hàm cho rõ ràng
     Truy xuất danh sách tất cả các hình ảnh chi tiết thuộc về nhiều 'port' cụ thể.
     """
     # Gọi hàm CRUD mới để lấy dữ liệu theo danh sách ports
-    db_detals, total = crud.get_all_detal_eco_retreats_by_ports(session=session, ports=ports, skip=skip, limit=limit)
+    db_detals, total = crud.get_all_detal_eco_retreats_by_ports(session=session, port=port, skip=skip, limit=limit)
     
     response_items = [] 
     for db_detal in db_detals:

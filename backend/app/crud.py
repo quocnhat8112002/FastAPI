@@ -295,21 +295,21 @@ def get_detal_by_port_and_picture(session: Session, port: int, picture_name: str
 
 def get_all_detal_eco_retreats_by_ports(
     session: Session, 
-    ports: List[int], # Nhận một danh sách các số port
+    port: List[int], # Nhận một danh sách các số port
     skip: int = 0, 
     limit: int = 100
 ) -> Tuple[List[DetalEcoRetreat], int]:
     """
     Truy xuất danh sách tất cả các hình ảnh chi tiết thuộc về một hoặc nhiều 'port' cụ thể.
     """
-    if not ports:
+    if not port:
         return [], 0 # Nếu danh sách ports rỗng, trả về kết quả rỗng
 
     # Xây dựng câu lệnh SELECT để lọc theo nhiều ports bằng toán tử IN
-    statement = select(DetalEcoRetreat).where(DetalEcoRetreat.port.in_(ports))
+    statement = select(DetalEcoRetreat).where(DetalEcoRetreat.port.in_(port))
     
     # Lấy tổng số lượng (để phân trang)
-    count_statement = select(func.count()).where(DetalEcoRetreat.port.in_(ports))
+    count_statement = select(func.count()).where(DetalEcoRetreat.port.in_(port))
     total_count = session.exec(count_statement).one()
 
     # Áp dụng skip và limit
