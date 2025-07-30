@@ -602,7 +602,7 @@ def ecopark_search_by_zone_name_type(
         zone_number = extract_zone_number(zone_name_path)
         building_code = normalize_building_type(building_type_path)
         image_name = f"{zone_number}_{building_code}.png" if zone_number and building_code != "unknown" else "pk.png"
-        image_url = f"{str(request.base_url).rstrip('/')}/static/EcoRetreat/{image_name}"
+        image_url = f"{str(request.base_url).rstrip('/')}/api/v1/static/EcoRetreat/{image_name}"
         
         translated_item["image_url"] = image_url
         items_for_response.append(translated_item)
