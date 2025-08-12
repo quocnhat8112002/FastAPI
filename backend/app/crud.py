@@ -14,7 +14,11 @@ from app.models import (
     ProjectList, ProjectCreate, ProjectUpdate,
     UserProjectRole, UserProjectRoleCreate,
     Request, RequestCreate, RequestUpdate,
-    Ecopark, EcoparkCreate, EcoparkUpdate
+    Ecopark, EcoparkCreate, EcoparkUpdate,
+    AdministrativeRegionCreate, AdministrativeRegionUpdate, AdministrativeRegionList,
+    AdministrativeUnitCreate, AdministrativeUnitUpdate, AdministrativeUnitList,
+    ProvinceCreate, ProvinceUpdate, ProvinceList,
+    WardCreate, WardUpdate, WardList
 )
 
 # ========== USER CRUD ==========
@@ -268,6 +272,146 @@ def delete_ecopark(*, session: Session, db_ecopark: Ecopark) -> Ecopark:
     session.delete(db_ecopark)
     session.commit()
     return db_ecopark
+
+# ----------------------------------------------------
+# CRUD for AdministrativeRegion
+# ----------------------------------------------------
+def create_region(*, session: Session, region_in: AdministrativeRegionCreate) -> AdministrativeRegionList:
+    """Tạo một vùng hành chính mới."""
+    db_region = AdministrativeRegionList.model_validate(region_in)
+    session.add(db_region)
+    session.commit()
+    session.refresh(db_region)
+    return db_region
+
+def update_region(*, session: Session, db_region: AdministrativeRegionList, region_in: AdministrativeRegionUpdate) -> AdministrativeRegionList:
+    """Cập nhật một vùng hành chính."""
+    update_data = region_in.model_dump(exclude_unset=True)
+    db_region.sqlmodel_update(update_data)
+    session.add(db_region)
+    session.commit()
+    session.refresh(db_region)
+    return db_region
+
+def get_region(*, session: Session, region_id: int) -> Optional[AdministrativeRegionList]:
+    """Lấy một vùng hành chính theo ID."""
+    return session.get(AdministrativeRegionList, region_id)
+
+def get_all_regions(*, session: Session, skip: int = 0, limit: int = 100) -> List[AdministrativeRegionList]:
+    """Lấy tất cả các vùng hành chính."""
+    statement = select(AdministrativeRegionList).offset(skip).limit(limit)
+    return session.exec(statement).all()
+
+def delete_region(*, session: Session, db_region: AdministrativeRegionList) -> AdministrativeRegionList:
+    """Xóa một vùng hành chính."""
+    session.delete(db_region)
+    session.commit()
+    return db_region
+
+# ----------------------------------------------------
+# CRUD for AdministrativeUnit
+# ----------------------------------------------------
+def create_unit(*, session: Session, unit_in: AdministrativeUnitCreate) -> AdministrativeUnitList:
+    """Tạo một đơn vị hành chính mới."""
+    db_unit = AdministrativeUnitList.model_validate(unit_in)
+    session.add(db_unit)
+    session.commit()
+    session.refresh(db_unit)
+    return db_unit
+
+def update_unit(*, session: Session, db_unit: AdministrativeUnitList, unit_in: AdministrativeUnitUpdate) -> AdministrativeUnitList:
+    """Cập nhật một đơn vị hành chính."""
+    update_data = unit_in.model_dump(exclude_unset=True)
+    db_unit.sqlmodel_update(update_data)
+    session.add(db_unit)
+    session.commit()
+    session.refresh(db_unit)
+    return db_unit
+
+def get_unit(*, session: Session, unit_id: int) -> Optional[AdministrativeUnitList]:
+    """Lấy một đơn vị hành chính theo ID."""
+    return session.get(AdministrativeUnitList, unit_id)
+
+def get_all_units(*, session: Session, skip: int = 0, limit: int = 100) -> List[AdministrativeUnitList]:
+    """Lấy tất cả các đơn vị hành chính."""
+    statement = select(AdministrativeUnitList).offset(skip).limit(limit)
+    return session.exec(statement).all()
+
+def delete_unit(*, session: Session, db_unit: AdministrativeUnitList) -> AdministrativeUnitList:
+    """Xóa một đơn vị hành chính."""
+    session.delete(db_unit)
+    session.commit()
+    return db_unit
+
+# ----------------------------------------------------
+# CRUD for Province
+# ----------------------------------------------------
+def create_province(*, session: Session, province_in: ProvinceCreate) -> ProvinceList:
+    """Tạo một tỉnh/thành phố mới."""
+    db_province = ProvinceList.model_validate(province_in)
+    session.add(db_province)
+    session.commit()
+    session.refresh(db_province)
+    return db_province
+
+def update_province(*, session: Session, db_province: ProvinceList, province_in: ProvinceUpdate) -> ProvinceList:
+    """Cập nhật một tỉnh/thành phố."""
+    update_data = province_in.model_dump(exclude_unset=True)
+    db_province.sqlmodel_update(update_data)
+    session.add(db_province)
+    session.commit()
+    session.refresh(db_province)
+    return db_province
+
+def get_province(*, session: Session, province_code: str) -> Optional[ProvinceList]:
+    """Lấy một tỉnh/thành phố theo mã code."""
+    return session.get(ProvinceList, province_code)
+
+def get_all_provinces(*, session: Session, skip: int = 0, limit: int = 100) -> List[ProvinceList]:
+    """Lấy tất cả các tỉnh/thành phố."""
+    statement = select(ProvinceList).offset(skip).limit(limit)
+    return session.exec(statement).all()
+
+def delete_province(*, session: Session, db_province: ProvinceList) -> ProvinceList:
+    """Xóa một tỉnh/thành phố."""
+    session.delete(db_province)
+    session.commit()
+    return db_province
+
+# ----------------------------------------------------
+# CRUD for Ward
+# ----------------------------------------------------
+def create_ward(*, session: Session, ward_in: WardCreate) -> WardList:
+    """Tạo một phường/xã mới."""
+    db_ward = WardList.model_validate(ward_in)
+    session.add(db_ward)
+    session.commit()
+    session.refresh(db_ward)
+    return db_ward
+
+def update_ward(*, session: Session, db_ward: WardList, ward_in: WardUpdate) -> WardList:
+    """Cập nhật một phường/xã."""
+    update_data = ward_in.model_dump(exclude_unset=True)
+    db_ward.sqlmodel_update(update_data)
+    session.add(db_ward)
+    session.commit()
+    session.refresh(db_ward)
+    return db_ward
+
+def get_ward(*, session: Session, ward_code: str) -> Optional[WardList]:
+    """Lấy một phường/xã theo mã code."""
+    return session.get(WardList, ward_code)
+
+def get_all_wards(*, session: Session, skip: int = 0, limit: int = 100) -> List[WardList]:
+    """Lấy tất cả các phường/xã."""
+    statement = select(WardList).offset(skip).limit(limit)
+    return session.exec(statement).all()
+
+def delete_ward(*, session: Session, db_ward: WardList) -> WardList:
+    """Xóa một phường/xã."""
+    session.delete(db_ward)
+    session.commit()
+    return db_ward
 
 # ============================== DETAL ECO_RETREAT========================== ===
 def get_detal_eco_retreat_by_id(session: Session, detal_id: uuid.UUID) -> Optional[DetalEcoRetreat]:

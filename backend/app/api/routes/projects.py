@@ -133,7 +133,7 @@ def create_project(
 
 
 @router.put(
-    "/{project_id}",
+    "/{project_id}/{lang}",
     response_model=ProjectPublic,
     dependencies=[Depends(verify_rank_in_project([1, 2, 3]))]
 )
@@ -141,17 +141,35 @@ def update_project(
     *,
     session: SessionDep,
     project_id: UUID,
+    lang: str,
     project_in: ProjectUpdate
 ) -> Any:
     """
-    Update an existing project (rank or superuser).
+    Cập nhật một project hiện có dựa trên ngôn ngữ (rank hoặc superuser).
     """
+    # 1. Lấy project từ database
     db_project = crud.get_project_list(session=session, project_id=project_id)
     if not db_project:
         raise HTTPException(status_code=404, detail="Project không tồn tại")
-
-    return crud.update_project_list(session=session, db_project=db_project, project_in=project_in)
-
+    
+    # 2. Kiểm tra ngôn ngữ hợp lệ
+    if lang not in ["vi", "en"]:
+        raise HTTPException(status_code=400, detail="Ngôn ngữ không hợp lệ. Vui lòng chọn 'vi' hoặc 'en'.")
+    
+    # 3. Ánh xạ dữ liệu từ request tới database schema
+    update_data = {}
+    project_in_data = project_in.model_dump(exclude_unset=True)
+    
+    for key, value in project_in_data.items():
+        if key == "picture":
+            # Trường 'picture' không có hậu tố ngôn ngữ
+            update_data[key] = value
+        else:
+            # Các trường khác được thêm hậu tố ngôn ngữ
+            update_data[f"{key}_{lang}"] = value
+    
+    # 4. Gọi hàm CRUD để cập nhật database
+    return crud.update_project_list(session=session, db_project=db_project, update_data=update_data)
 
 @router.delete(
     "/{project_id}",

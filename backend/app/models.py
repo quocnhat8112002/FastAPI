@@ -114,8 +114,12 @@ class ProjectCreate(ProjectBase):
     pass
 
 
-class ProjectUpdate(ProjectBase):
-    pass
+class ProjectUpdate(SQLModel):
+    name: Optional[str] = None
+    address: Optional[str] = None
+    type: Optional[str] = None
+    investor: Optional[str] = None
+    picture: Optional[str] = None
 
 
 class ProjectList(ProjectBase, table=True):
@@ -261,6 +265,121 @@ class Message(SQLModel):
     message: str
 
 
+# ----------------------------------------------------
+# AdministrativeRegion - Vùng Hành chính
+# ----------------------------------------------------
+class AdministrativeRegionBase(SQLModel):
+    name_vi: str = Field(max_length=255)
+    name_en: str = Field(max_length=255)
+    code_name: Optional[str] = Field(default=None, max_length=255)
+    code_name_en: Optional[str] = Field(default=None, max_length=255)
+
+class AdministrativeRegionCreate(AdministrativeRegionBase):
+    pass
+
+class AdministrativeRegionUpdate(SQLModel):
+    name_vi: Optional[str] = None
+    name_en: Optional[str] = None
+    code_name: Optional[str] = None
+    code_name_en: Optional[str] = None
+
+class AdministrativeRegionList(AdministrativeRegionBase, table=True):
+    id: int = Field(primary_key=True)
+
+class AdministrativeRegionPublic(AdministrativeRegionBase):
+    id: int
+
+class AdministrativeRegionsPublic(SQLModel):
+    data: List[AdministrativeRegionPublic]
+    count: int
+
+# ----------------------------------------------------
+# AdministrativeUnit - Đơn vị Hành chính
+# ----------------------------------------------------
+class AdministrativeUnitBase(SQLModel):
+    full_name_vi: Optional[str] = Field(default=None, max_length=255)
+    full_name_en: Optional[str] = Field(default=None, max_length=255)
+    short_name_vi: Optional[str] = Field(default=None, max_length=255)
+    short_name_en: Optional[str] = Field(default=None, max_length=255)
+    code_name: Optional[str] = Field(default=None, max_length=255)
+    code_name_en: Optional[str] = Field(default=None, max_length=255)
+
+class AdministrativeUnitCreate(AdministrativeUnitBase):
+    pass
+
+class AdministrativeUnitUpdate(SQLModel):
+    full_name_vi: Optional[str] = None
+    full_name_en: Optional[str] = None
+    short_name_vi: Optional[str] = None
+    short_name_en: Optional[str] = None
+    code_name: Optional[str] = None
+    code_name_en: Optional[str] = None
+
+class AdministrativeUnitList(AdministrativeUnitBase, table=True):
+    id: int = Field(primary_key=True)
+
+class AdministrativeUnitPublic(AdministrativeUnitBase):
+    id: int
+
+class AdministrativeUnitsPublic(SQLModel):
+    data: List[AdministrativeUnitPublic]
+    count: int
+
+# ----------------------------------------------------
+# Province - Tỉnh/Thành phố
+# ----------------------------------------------------
+class ProvinceBase(SQLModel):
+    name_vi: str = Field(max_length=255)
+    name_en: Optional[str] = Field(default=None, max_length=255)
+    full_name_vi: str = Field(max_length=255)
+    full_name_en: Optional[str] = Field(default=None, max_length=255)
+    code_name: Optional[str] = Field(default=None, max_length=255)
+    administrative_unit_id: Optional[int] = Field(default=None, foreign_key="administrativeunitlist.id")
+
+class ProvinceCreate(ProvinceBase):
+    pass
+
+class ProvinceUpdate(ProvinceBase):
+    pass
+
+class ProvinceList(ProvinceBase, table=True):
+    code: str = Field(primary_key=True, max_length=20)
+
+class ProvincePublic(ProvinceBase):
+    code: str
+
+class ProvincesPublic(SQLModel):
+    data: List[ProvincePublic]
+    count: int
+
+# ----------------------------------------------------
+# Ward - Phường/Xã
+# ----------------------------------------------------
+class WardBase(SQLModel):
+    name_vi: str = Field(max_length=255)
+    name_en: Optional[str] = Field(default=None, max_length=255)
+    full_name_vi: Optional[str] = Field(default=None, max_length=255)
+    full_name_en: Optional[str] = Field(default=None, max_length=255)
+    code_name: Optional[str] = Field(default=None, max_length=255)
+    province_code: Optional[str] = Field(default=None, foreign_key="provincelist.code")
+    administrative_unit_id: Optional[int] = Field(default=None, foreign_key="administrativeunitlist.id")
+
+class WardCreate(WardBase):
+    pass
+
+class WardUpdate(WardBase):
+    pass
+
+class WardList(WardBase, table=True):
+    code: str = Field(primary_key=True, max_length=20)
+
+class WardPublic(WardBase):
+    code: str
+
+class WardsPublic(SQLModel):
+    data: List[WardPublic]
+    count: int
+    
 # ============================== DU AN: ECO_RETREAT========================== ===
 
 class EcoparkBase(SQLModel):
