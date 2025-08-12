@@ -1,9 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from sqlalchemy import func
 from sqlmodel import select
 from uuid import UUID
-from typing import List, Any
+from typing import Dict, List, Any, Optional
 
 from app.models import (
+    ProjectList,
+    ProjectsPublic,
+    User,
     UserProjectRole,
     UserProjectRoleCreate,
     UserProjectRoleUpdate,
@@ -11,16 +15,68 @@ from app.models import (
     Role,
 )
 from app.api.deps import (
+    CurrentUser,
     get_current_user,
     get_current_active_superuser,
     get_current_active_user,
     ProjectAccessInfo,
     SessionDep,
+    verify_system_rank_in,
 )
 import app.crud as crud
 
 router = APIRouter(prefix="/UserProjectRole", tags=["UserProjectRole"])
 
+PROJECT_FOLDER = "DUAN"
+STATIC_URL_PREFIX = "/api/v1/static"
+
+
+def build_flat_image_url(request: Request, picture: Optional[str]) -> Optional[str]:
+    if not picture:
+        return None
+    base = str(request.base_url).rstrip("/")
+    return f"{base}{STATIC_URL_PREFIX}/{PROJECT_FOLDER}/{picture}.jpg"
+
+
+
+@router.get(
+    "/assignments",
+    response_model=List[Dict[str, Any]],
+    dependencies=[
+        Depends(get_current_user),
+        Depends(verify_system_rank_in([1, 2])) # Chỉ cho phép superuser và admin (rank 1, 2) truy cập
+    ]
+)
+def read_all_user_project_assignments(
+    *,
+    session: SessionDep,
+    current_user: CurrentUser,
+    lang: str = Query("en", regex="^(vi|en)$", description="Mã ngôn ngữ (e.g., 'vi' or 'en')"),
+) -> Any:
+    """
+    Đọc tất cả các bản phân quyền user-project-role.
+    Chỉ cho phép superuser hoặc người có quyền admin hệ thống.
+    Thông tin dự án được hiển thị theo ngôn ngữ được chỉ định.
+    """
+
+    statement = select(UserProjectRole, User, ProjectList, Role).join(User).join(ProjectList).join(Role)
+    
+    results = session.exec(statement).all()
+
+    assignments = []
+    for user_project_role, user, project, role in results:
+        assignment_info = {
+            "user_id": user.id,
+            "user_email": user.email,
+            "project_id": project.id,
+            "project_name": getattr(project, f'name_{lang}', None), # Ánh xạ tên dự án theo ngôn ngữ
+            "role_id": role.id,
+            "role_name": role.name,
+            "role_rank": role.rank,
+        }
+        assignments.append(assignment_info)
+
+    return assignments
 
 @router.get(
     "/{project_id}",
@@ -43,12 +99,13 @@ def read_user_project_roles(
 
 
 @router.post(
-    "/",
+    "/{project_id}",
     response_model=UserProjectRolePublic,
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(get_current_active_user)],
 )
 def assign_user_to_project(
+    project_id: UUID,
     user_project_role_in: UserProjectRoleCreate,
     session: SessionDep,
     info: ProjectAccessInfo,

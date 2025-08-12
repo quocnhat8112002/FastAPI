@@ -117,6 +117,60 @@ def read_projects(
         "count": count
     }
 
+@router.get(
+    "/{project_id}",
+    response_model=None,
+    dependencies=[
+        Depends(get_current_user), 
+        Depends(verify_system_rank_in([1, 2, 3, 4, 5, 6]))
+    ]
+)
+def read_project_by_id(
+    *,
+    session: SessionDep,
+    project_id: UUID,
+    current_user: CurrentUser,
+    request: Request,
+    lang: str = Query("en", regex="^(vi|en)$", description="Mã ngôn ngữ (e.g., 'vi' or 'en')"),
+) -> Any:
+    """
+    Lấy một dự án cụ thể theo ID.
+    Dữ liệu trả về sẽ được dịch sang ngôn ngữ được chỉ định.
+    Rank của người dùng hiện tại đối với dự án cũng được trả về.
+    """
+    db_project = crud.get_project_list(session=session, project_id=project_id)
+    if not db_project:
+        raise HTTPException(status_code=404, detail="Project không tồn tại")
+
+    user_rank = None
+    if current_user.is_superuser:
+        user_rank = 1
+    else:
+        user_project_role = session.exec(
+            select(UserProjectRole.role_id)
+            .where(UserProjectRole.user_id == current_user.id)
+            .where(UserProjectRole.project_id == project_id)
+        ).one_or_none()
+        
+        if user_project_role:
+            role = session.get(Role, user_project_role)
+            if role:
+                user_rank = role.rank
+
+    translated_item = {
+        "id": db_project.id,
+        "name": getattr(db_project, f'name_{lang}', None),
+        "address": getattr(db_project, f'address_{lang}', None),
+        "type": getattr(db_project, f'type_{lang}', None),
+        "investor": getattr(db_project, f'investor_{lang}', None),
+        "picture": db_project.picture,
+        "image_url": build_flat_image_url(request, db_project.picture),
+        "rank": user_rank,
+    }
+
+    return translated_item
+
+
 @router.post("/", response_model=ProjectPublic, status_code=201)
 def create_project(
     *,
@@ -133,7 +187,7 @@ def create_project(
 
 
 @router.put(
-    "/{project_id}/{lang}",
+    "/{project_id}",
     response_model=ProjectPublic,
     dependencies=[Depends(verify_rank_in_project([1, 2, 3]))]
 )
@@ -141,7 +195,7 @@ def update_project(
     *,
     session: SessionDep,
     project_id: UUID,
-    lang: str,
+    lang: str = Query("en", regex="^(vi|en)$", description="Mã ngôn ngữ (e.g., 'vi' or 'en')"),
     project_in: ProjectUpdate
 ) -> Any:
     """
@@ -162,13 +216,12 @@ def update_project(
     
     for key, value in project_in_data.items():
         if key == "picture":
-            # Trường 'picture' không có hậu tố ngôn ngữ
             update_data[key] = value
         else:
-            # Các trường khác được thêm hậu tố ngôn ngữ
             update_data[f"{key}_{lang}"] = value
     
     # 4. Gọi hàm CRUD để cập nhật database
+    # Truyền dictionary `update_data` vào hàm CRUD.
     return crud.update_project_list(session=session, db_project=db_project, update_data=update_data)
 
 @router.delete(

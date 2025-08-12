@@ -132,9 +132,16 @@ def create_project_list(*, session: Session, project_in: ProjectCreate) -> Proje
     session.refresh(db_project)
     return db_project
 
-def update_project_list(*, session: Session, db_project: ProjectList, project_in: ProjectUpdate) -> ProjectList:
-    update_data = project_in.model_dump(exclude_unset=True)
-    db_project.sqlmodel_update(update_data)
+def update_project_list(*, session: Session, db_project: ProjectList, update_data: dict) -> ProjectList:
+    """
+    Cập nhật project hiện có trong database bằng một dictionary dữ liệu.
+    - db_project: đối tượng ProjectList cần cập nhật
+    - update_data: dictionary chứa dữ liệu đã được ánh xạ
+    """
+    for key, value in update_data.items():
+        if value is not None:
+            setattr(db_project, key, value)
+            
     session.add(db_project)
     session.commit()
     session.refresh(db_project)
