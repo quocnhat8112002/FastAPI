@@ -76,7 +76,10 @@ def read_all_user_project_assignments(
         }
         assignments.append(assignment_info)
 
-    return assignments
+    return {
+        "assignments": assignments,
+        "total": len(assignments)
+    }
 
 @router.get(
     "/{project_id}",
