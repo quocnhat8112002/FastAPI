@@ -41,7 +41,7 @@ def build_flat_image_url(request: Request, picture: Optional[str]) -> Optional[s
 
 @router.get(
     "/assignments",
-    response_model=List[Dict[str, Any]],
+    response_model=Dict[str, Any],
     dependencies=[
         Depends(get_current_user),
         Depends(verify_system_rank_in([1, 2])) # Chỉ cho phép superuser và admin (rank 1, 2) truy cập
