@@ -169,9 +169,10 @@ class RolesPublic(SQLModel):
 # === USER-PROJECT-ROLE ===
 
 class UserProjectRole(SQLModel, table=True):
-    user_id: uuid.UUID = Field(foreign_key="user.id", primary_key=True)
-    project_id: uuid.UUID = Field(foreign_key="projectlist.id", primary_key=True)
-    role_id: uuid.UUID = Field(foreign_key="role.id", primary_key=True)
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    user_id: uuid.UUID = Field(foreign_key="user.id", index=True)
+    project_id: uuid.UUID = Field(foreign_key="projectlist.id", index=True)
+    role_id: uuid.UUID = Field(foreign_key="role.id", index=True)
 
 
 class UserProjectRoleCreate(SQLModel):
@@ -185,6 +186,7 @@ class UserProjectRoleUpdate(SQLModel):
 
 
 class UserProjectRolePublic(SQLModel):
+    id: uuid.UUID
     user_id: uuid.UUID
     project_id: uuid.UUID
     role_id: uuid.UUID

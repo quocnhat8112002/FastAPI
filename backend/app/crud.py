@@ -160,6 +160,11 @@ def delete_project_list(*, session: Session, db_project: ProjectList) -> Project
     return db_project
 
 # ========== USER PROJECT ROLE CRUD ==========
+def get_user_project_role_by_id(session: Session, id: uuid.UUID) -> Optional[UserProjectRole]:
+    """
+    Lấy một bản ghi UserProjectRole bằng ID của nó.
+    """
+    return session.get(UserProjectRole, id)
 
 def add_user_to_project_role(*, session: Session, user_project_role_in: UserProjectRoleCreate) -> UserProjectRole:
     db_upr = UserProjectRole.model_validate(user_project_role_in)

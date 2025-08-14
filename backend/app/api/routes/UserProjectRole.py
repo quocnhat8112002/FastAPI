@@ -66,6 +66,7 @@ def read_all_user_project_assignments(
     assignments = []
     for user_project_role, user, project, role in results:
         assignment_info = {
+            "id": user_project_role.id,
             "user_id": user.id,
             "user_email": user.email,
             "project_id": project.id,
@@ -82,24 +83,45 @@ def read_all_user_project_assignments(
     }
 
 @router.get(
-    "/{project_id}",
-    response_model=List[UserProjectRolePublic],
+    "/{user_project_role_id}",
+    response_model=Dict[str, Any],
     dependencies=[Depends(get_current_active_user)],
 )
-def read_user_project_roles(
-    project_id: UUID,
+def read_single_user_project_assignment(
+    user_project_role_id: UUID,
     session: SessionDep,
-    info: ProjectAccessInfo,
+    lang: str = Query("en", regex="^(vi|en)$", description="Mã ngôn ngữ"),
 ) -> Any:
-    current_user, _, current_rank = info
-
-    user_roles = crud.get_user_project_role(session=session, project_id=project_id)
-
-    if current_user.is_superuser:
-        return user_roles
-
-    return [upr for upr in user_roles if upr.role.rank >= current_rank]
-
+    """
+    Đọc một bản phân quyền User-Project-Role cụ thể dựa trên ID của nó.
+    """
+    statement = (
+        select(UserProjectRole, User, ProjectList, Role)
+        .join(User)
+        .join(ProjectList)
+        .join(Role)
+        .where(UserProjectRole.id == user_project_role_id)
+    )
+    result = session.exec(statement).first()
+    if not result:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Không tìm thấy bản phân quyền."
+        )
+    user_project_role, user, project, role = result
+    
+    assignment_info = {
+        "id": user_project_role.id,
+        "user_id": user.id,
+        "user_email": user.email,
+        "project_id": project.id,
+        "project_name": getattr(project, f'name_{lang}', None),
+        "role_id": role.id,
+        "role_name": role.name,
+        "role_rank": role.rank,
+    }
+    
+    return assignment_info
 
 @router.post(
     "/{project_id}",
@@ -172,28 +194,60 @@ def update_user_role_in_project(
 
 
 @router.delete(
-    "/{user_id}/{project_id}/{role_id}",
+    "/{user_project_role_id}",
     status_code=status.HTTP_200_OK,
     dependencies=[Depends(get_current_active_user)],
 )
-def remove_user_from_project(
-    user_id: UUID,
-    project_id: UUID,
-    role_id: UUID,
+def remove_user_project_role_by_id(
+    user_project_role_id: UUID,
     session: SessionDep,
-    info: ProjectAccessInfo,
+    current_user: User = Depends(get_current_active_user)
 ) -> dict:
-    current_user, _, current_rank = info
-
-    user_role = crud.get_user_project_role(session=session, user_id=user_id, project_id=project_id, role_id=role_id)
-    if not user_role:
-        raise HTTPException(status_code=404, detail="Không tìm thấy phân quyền")
-
-    if current_user.is_superuser or user_role.role.rank > current_rank:
-        crud.delete_user_project_role(session=session, db_upr=user_role)
-        return {"message": "Xóa phân quyền thành công"}
-
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail="Bạn chỉ được xoá người có vai trò thấp hơn mình."
+    """
+    Xoá một bản phân quyền UserProjectRole bằng ID của nó,
+    có kiểm tra quyền hạn chi tiết.
+    """
+    statement = (
+        select(UserProjectRole, Role)
+        .join(Role)
+        .where(UserProjectRole.id == user_project_role_id)
     )
+    result = session.exec(statement).first()
+    
+    if not result:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Không tìm thấy bản phân quyền."
+        )
+
+    user_role_to_delete, deleted_role = result
+    current_user_project_role_statement = (
+        select(UserProjectRole, Role)
+        .join(Role)
+        .where(
+            UserProjectRole.user_id == current_user.id,
+            UserProjectRole.project_id == user_role_to_delete.project_id
+        )
+    )
+    current_user_role_result = session.exec(current_user_project_role_statement).first()
+    deleted_user_rank = deleted_role.rank
+
+    if not current_user.is_superuser:
+        if not current_user_role_result:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Bạn không có quyền trong dự án này."
+            )
+        
+        _, current_user_role = current_user_role_result
+        current_user_rank = current_user_role.rank
+
+        if current_user_rank >= deleted_user_rank:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Bạn chỉ được xoá người có vai trò thấp hơn mình."
+            )
+    session.delete(user_role_to_delete)
+    session.commit()
+    
+    return {"message": "Xóa phân quyền thành công"}
