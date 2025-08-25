@@ -387,22 +387,22 @@ class WardsPublic(SQLModel):
 class EcoparkBase(SQLModel):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     port: int = Field(index=True, unique=True)
-    building_name: Optional[str]
-    picture_name: Optional[str]
-    building_type_vi: Optional[str]
-    building_type_en: Optional[str]
-    amenity_type_vi: Optional[str]
-    amenity_type_en: Optional[str]
-    zone_name_vi: Optional[str]
-    zone_name_en: Optional[str]
-    zone: Optional[str]
-    amenity: Optional[str]
-    direction_vi: Optional[str]
-    bedroom: Optional[int]
-    price: Optional[int]
-    status_vi: Optional[str]
-    direction_en: Optional[str]
-    status_en: Optional[str]
+    building_name: Optional[str] = None
+    picture_name: Optional[str] = None
+    building_type_vi: Optional[str] = None
+    building_type_en: Optional[str] = None
+    amenity_type_vi: Optional[str] = None
+    amenity_type_en: Optional[str] = None
+    zone_name_vi: Optional[str] = None
+    zone_name_en: Optional[str] = None
+    zone: Optional[str] = None
+    amenity: Optional[str] = None
+    direction_vi: Optional[str] = None
+    bedroom: Optional[int] = None
+    price: Optional[int] = None
+    status_vi: Optional[str] = None
+    direction_en: Optional[str] = None
+    status_en: Optional[str] = None
     description_vi: Optional[str] = None
     description_en: Optional[str] = None
 

@@ -1,3 +1,4 @@
+import uuid
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlmodel import select
 from uuid import UUID
@@ -45,6 +46,49 @@ def translate_request_item(item_dict: Dict[str, Any], lang: str) -> Dict[str, An
             
     return item_dict
 
+@router.get("/{request_id}", response_model=RequestPublic)
+def get_request_by_id(
+    session: SessionDep,
+    project_info: ProjectAccessInfo,
+    request_id: uuid.UUID,
+    current_user=Depends(get_current_active_user),
+    lang: str = Query("en", regex="^(vi|en)$", description="Mã ngôn ngữ (ví dụ: 'vi' hoặc 'en')"),
+) -> Any:
+    """
+    Lấy một Request cụ thể theo ID, có kiểm tra quyền hạn.
+    """
+    user, project_id, user_rank = project_info
+        
+    if current_user.is_superuser:
+        request_obj = session.get(Request, request_id)
+        if request_obj and request_obj.project_id == project_id:
+            request_dict = request_obj.model_dump()
+            return translate_request_item(request_dict, lang)
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Không tìm thấy yêu cầu này trong dự án."
+            )
+
+    stmt = (
+        select(Request)
+        .join(Role, Request.role_id == Role.id)
+        .where(
+            Request.id == request_id,
+            Request.project_id == project_id,
+            Role.rank > user_rank
+        )
+    )
+    request_obj = session.exec(stmt).first()
+
+    if not request_obj:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Không tìm thấy yêu cầu này hoặc bạn không có quyền xem."
+        )
+    request_dict = request_obj.model_dump()
+    return translate_request_item(request_dict, lang)
+
 @router.get("/", response_model=RequestPublic)
 def get_requests_by_project(
     session: SessionDep,
@@ -56,7 +100,6 @@ def get_requests_by_project(
 ):
     user, project_id, user_rank = project_info
 
-    # Nếu là superuser thì truy vấn tất cả request trong project
     if current_user.is_superuser:
         stmt = (
             select(Request)
@@ -70,7 +113,6 @@ def get_requests_by_project(
         ).all()
         return RequestPublic(data=requests, count=len(total))
 
-    # Nếu là user thường → chỉ xem các request xin cấp quyền có role.rank > user.rank
     stmt = (
         select(Request)
         .join(Role, Request.role_id == Role.id)

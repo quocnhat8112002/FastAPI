@@ -769,7 +769,42 @@ async def add_multiple_detal_images_for_building(
     logger.info(f"API request finished successfully. Processed {len(results)} files.")
     return results
 
+@router.patch("/{ecopark_id}", response_model=Ecopark)
+def update_ecopark_details(
+    *,
+    session: SessionDep,
+    ecopark_id: UUID,
+    ecopark_in: EcoparkUpdate,
+    current_user: Any = Depends(get_current_active_user),
+) -> Any:
+    """
+    Cập nhật thông tin chi tiết của một bản ghi Ecopark theo ID.
+    Chỉ cập nhật những trường được cung cấp (động).
+    """
+    db_ecopark = crud.get(session=session, ecopark_id=ecopark_id)
+    if not db_ecopark:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Không tìm thấy bản ghi Ecopark."
+        )
+    update_data = ecopark_in.model_dump(exclude_unset=True)
 
+    # Nếu trường 'port' có trong request body và nó khác với port hiện tại
+    if "port" in update_data and update_data["port"] != db_ecopark.port:
+        existing_ecopark = crud.get_by_port(session=session, port=update_data["port"])
+        if existing_ecopark:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Port {update_data['port']} đã tồn tại trong hệ thống."
+            )
+
+    updated_ecopark = crud.update_ecopark(
+        session=session,
+        db_ecopark=db_ecopark,
+        ecopark_in=ecopark_in
+    )
+    
+    return updated_ecopark
 
 @router.get(
     "/image/{detal_id}", 
@@ -1000,51 +1035,51 @@ def bulk_delete_detal_images_by_ids(
     return {"message": message}
 
 
-@router.delete(
-    "/clear-all-detal-eco-retreat-records",
-    status_code=status.HTTP_200_OK,
-    summary="Xóa TẤT CẢ các bản ghi DetalEcoRetreat (KHÔNG xóa file ảnh vật lý)",
-    description="**Cảnh báo: Hành động này sẽ xóa vĩnh viễn tất cả các bản ghi trong bảng 'detalecoretreat' khỏi cơ sở dữ liệu. Các file ảnh vật lý trên hệ thống file sẽ KHÔNG bị xóa.** Chỉ dành cho superuser.",
-    response_model=Dict[str, Any],
-    dependencies=[Depends(get_current_active_superuser)]
-)
-async def clear_all_detal_eco_retreat_records(
-    session: SessionDep,
-) -> Dict[str, Any]:
-    logger.warning("Attempting to delete ALL DetalEcoRetreat records (files will NOT be deleted).")
+# @router.delete(
+#     "/clear-all-detal-eco-retreat-records",
+#     status_code=status.HTTP_200_OK,
+#     summary="Xóa TẤT CẢ các bản ghi DetalEcoRetreat (KHÔNG xóa file ảnh vật lý)",
+#     description="**Cảnh báo: Hành động này sẽ xóa vĩnh viễn tất cả các bản ghi trong bảng 'detalecoretreat' khỏi cơ sở dữ liệu. Các file ảnh vật lý trên hệ thống file sẽ KHÔNG bị xóa.** Chỉ dành cho superuser.",
+#     response_model=Dict[str, Any],
+#     dependencies=[Depends(get_current_active_superuser)]
+# )
+# async def clear_all_detal_eco_retreat_records(
+#     session: SessionDep,
+# ) -> Dict[str, Any]:
+#     logger.warning("Attempting to delete ALL DetalEcoRetreat records (files will NOT be deleted).")
 
-    try:
-        # Lấy số lượng bản ghi hiện có trước khi xóa (tùy chọn, để báo cáo)
-        count_statement = select(DetalEcoRetreat)
-        initial_count = len(session.exec(count_statement).all())
+#     try:
+#         # Lấy số lượng bản ghi hiện có trước khi xóa (tùy chọn, để báo cáo)
+#         count_statement = select(DetalEcoRetreat)
+#         initial_count = len(session.exec(count_statement).all())
 
-        if initial_count == 0:
-            logger.info("No DetalEcoRetreat records found to delete.")
-            return {
-                "message": "Không có bản ghi DetalEcoRetreat nào để xóa.",
-                "deleted_db_records": 0
-            }
+#         if initial_count == 0:
+#             logger.info("No DetalEcoRetreat records found to delete.")
+#             return {
+#                 "message": "Không có bản ghi DetalEcoRetreat nào để xóa.",
+#                 "deleted_db_records": 0
+#             }
 
-        # Xóa tất cả các bản ghi trong bảng DetalEcoRetreat
-        # Sử dụng câu lệnh DELETE trực tiếp
-        delete_statement = delete(DetalEcoRetreat)
-        result = session.exec(delete_statement)
-        deleted_rows = result.rowcount # Lấy số lượng hàng bị ảnh hưởng (số lượng bản ghi đã xóa)
+#         # Xóa tất cả các bản ghi trong bảng DetalEcoRetreat
+#         # Sử dụng câu lệnh DELETE trực tiếp
+#         delete_statement = delete(DetalEcoRetreat)
+#         result = session.exec(delete_statement)
+#         deleted_rows = result.rowcount # Lấy số lượng hàng bị ảnh hưởng (số lượng bản ghi đã xóa)
 
-        session.commit() # Commit giao dịch
+#         session.commit() # Commit giao dịch
 
-        logger.info(f"Finished clearing DetalEcoRetreat data. Deleted {deleted_rows} DB records.")
+#         logger.info(f"Finished clearing DetalEcoRetreat data. Deleted {deleted_rows} DB records.")
 
-        return {
-            "message": "Đã xóa thành công tất cả các bản ghi DetalEcoRetreat.",
-            "deleted_db_records": deleted_rows
-        }
+#         return {
+#             "message": "Đã xóa thành công tất cả các bản ghi DetalEcoRetreat.",
+#             "deleted_db_records": deleted_rows
+#         }
 
-    except Exception as e:
-        session.rollback() # Rollback nếu có bất kỳ lỗi nào xảy ra trong quá trình
-        logger.exception("An error occurred while clearing DetalEcoRetreat records:")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Lỗi hệ thống khi xóa bản ghi DetalEcoRetreat: {e}."
-        )
+#     except Exception as e:
+#         session.rollback() # Rollback nếu có bất kỳ lỗi nào xảy ra trong quá trình
+#         logger.exception("An error occurred while clearing DetalEcoRetreat records:")
+#         raise HTTPException(
+#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+#             detail=f"Lỗi hệ thống khi xóa bản ghi DetalEcoRetreat: {e}."
+#         )
 
