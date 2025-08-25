@@ -262,6 +262,20 @@ def get_by_port(*, session: Session, port: int) -> Optional[Ecopark]:
     statement = select(Ecopark).where(Ecopark.port == port)
     return session.exec(statement).first()
 
+def get_all_ecopark(*, session: Session, skip: int = 0, limit: int = 100) -> List[Ecopark]:
+    """
+    Lấy tất cả các bản ghi Ecopark với tùy chọn phân trang.
+    """
+    statement = select(Ecopark).offset(skip).limit(limit)
+    return session.exec(statement).all()
+
+def get_ecopark_count(*, session: Session) -> int:
+    """
+    Lấy tổng số lượng bản ghi Ecopark trong database.
+    """
+    # Sử dụng func.count() để đếm số bản ghi một cách hiệu quả
+    statement = select(func.count()).select_from(Ecopark)
+    return session.exec(statement).one()
 
 def create_ecopark(*, session: Session, ecopark_in: EcoparkCreate) -> Ecopark:
     ecopark = Ecopark.model_validate(ecopark_in)

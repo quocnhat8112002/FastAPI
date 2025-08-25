@@ -82,6 +82,55 @@ def build_flat_image_url(request: Request, picture_name: Optional[str]) -> Optio
     base = str(request.base_url).rstrip("/")
     return f"{base}{STATIC_URL_PREFIX}/{PROJECT_FOLDER}/{picture_name}.png"
 
+def translate_ecopark_item(data: Dict[str, Any], lang: str) -> Dict[str, Any]:
+    """
+    Translates language-specific fields of an Ecopark item.
+    """
+    translated_data = data.copy()
+    
+    translatable_fields = [
+        "zone_name",
+        "building_type",
+        "amenity_type",
+        "direction",
+        "status",
+        "description",
+    ]
+    
+    for field in translatable_fields:
+        lang_specific_key = f"{field}_{lang}"
+        translated_data[field] = translated_data.pop(lang_specific_key, None)
+        
+        other_lang = "vi" if lang == "en" else "en"
+        other_lang_key = f"{field}_{other_lang}"
+        if other_lang_key in translated_data:
+            del translated_data[other_lang_key]
+            
+    return translated_data
+
+@router.get("/") 
+def get_all_ecopark_records(
+    session: SessionDep,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, le=100),
+    lang: str = Query("en", regex="^(vi|en)$", description="Mã ngôn ngữ ('vi' hoặc 'en')"),
+) -> Any:
+    """
+    Lấy ra tất cả các bản ghi Ecopark, áp dụng phân trang và dịch thuật theo ngôn ngữ yêu cầu.
+    """
+    ecopark_records = crud.get_all_ecopark(session=session, skip=skip, limit=limit)
+    total_count = crud.get_ecopark_count(session=session)
+    
+    translated_ecoparks = []
+    for record in ecopark_records:
+        record_dict = record.model_dump()
+        translated_dict = translate_ecopark_item(record_dict, lang)
+        translated_ecoparks.append(translated_dict)
+
+    return {
+        "data": translated_ecoparks,
+        "count": total_count
+    }
 
 @router.post("/{project_id}/upload", response_model=dict, dependencies=[Depends(get_current_active_superuser)],)
 def upload_excel(
