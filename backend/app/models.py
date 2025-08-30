@@ -415,8 +415,13 @@ class EcoparkUpdate(EcoparkBase):
     id: Optional[uuid.UUID] = None 
     port: Optional[int] = None
 
-class EcoparkPublic(BaseModel):
-    data: List[EcoparkBase]
+class EcoparkPublic(EcoparkBase):
+    pass # Kế thừa các trường từ EcoparkBase, không cần định nghĩa lại
+
+# MÔ HÌNH BAO BỌC CHO PHẢN HỒI API
+# Chứa danh sách các bản ghi và tổng số
+class EcoparksPublic(BaseModel):
+    data: List[EcoparkPublic]
     count: int
 
 class Ecopark(EcoparkBase, table=True):
