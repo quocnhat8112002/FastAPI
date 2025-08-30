@@ -74,6 +74,7 @@ class UsersPublic(SQLModel):
 
 # === SYSTEM ===
 class SystemBase(SQLModel):
+    name: Optional[str] = None
     rank_total: int
     description: Optional[str] = None
 
@@ -85,6 +86,7 @@ class SystemUpdate(SystemBase):
 
 class System(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    name: Optional[str] = None
     rank_total: int
     description: Optional[str] = None
 
