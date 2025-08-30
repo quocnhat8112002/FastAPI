@@ -415,9 +415,9 @@ class EcoparkUpdate(EcoparkBase):
     id: Optional[uuid.UUID] = None 
     port: Optional[int] = None
 
-class EcoparkPublic(EcoparkBase):
-    id: uuid.UUID
-    port: int
+class EcoparkPublic(BaseModel):
+    data: List[EcoparkBase]
+    count: int
 
 class Ecopark(EcoparkBase, table=True):
     price: Optional[int] = Field(default=None, sa_type=BigInteger)
