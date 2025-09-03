@@ -416,13 +416,7 @@ class EcoparkUpdate(EcoparkBase):
     port: Optional[int] = None
 
 class EcoparkPublic(EcoparkBase):
-    pass # Kế thừa các trường từ EcoparkBase, không cần định nghĩa lại
-
-# MÔ HÌNH BAO BỌC CHO PHẢN HỒI API
-# Chứa danh sách các bản ghi và tổng số
-class EcoparksPublic(BaseModel):
-    data: List[EcoparkPublic]
-    count: int
+    pass 
 
 class Ecopark(EcoparkBase, table=True):
     price: Optional[int] = Field(default=None, sa_type=BigInteger)

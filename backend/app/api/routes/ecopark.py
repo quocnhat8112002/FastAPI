@@ -8,10 +8,10 @@ from fastapi.responses import FileResponse, JSONResponse
 import pandas as pd
 from fastapi import APIRouter, Form, Path, UploadFile, File, Depends, HTTPException, Query, logger, status, Request
 from sqlalchemy import func, delete
-from sqlmodel import select
+from sqlmodel import SQLModel, select
 
 from app import crud
-from app.models import DetalEcoRetreat, DetalEcoRetreatCreate, DetalEcoRetreatPublic, DetalEcoRetreatResponse, DetalEcoRetreatUpdate, Ecopark, EcoparkCreate, EcoparkUpdate, EcoparkPublic, EcoparksPublic
+from app.models import DetalEcoRetreat, DetalEcoRetreatCreate, DetalEcoRetreatPublic, DetalEcoRetreatResponse, DetalEcoRetreatUpdate, Ecopark, EcoparkCreate, EcoparkUpdate, EcoparkPublic
 from app.api.deps import get_current_user, SessionDep, verify_rank_in_project
 from app import crud
 from app.api import deps
@@ -83,48 +83,6 @@ def build_flat_image_url(request: Request, picture_name: Optional[str]) -> Optio
     base = str(request.base_url).rstrip("/")
     return f"{base}{STATIC_URL_PREFIX}/{PROJECT_FOLDER}/{picture_name}.png"
 
-def translate_ecopark_item(data: Dict[str, Any], lang: str) -> Dict[str, Any]:
-    """
-    Translates language-specific fields of an Ecopark item.
-    
-    This version correctly handles missing language fields and ensures cleanup.
-    """
-    translated_data = data.copy()
-
-    translatable_fields = [
-        "zone_name",
-        "building_type",
-        "amenity_type",
-        "direction",
-        "status",
-        "description",
-    ]
-
-    other_lang = "vi" if lang == "en" else "en"
-
-    for field in translatable_fields:
-        # 1. Lấy giá trị cho ngôn ngữ yêu cầu
-        lang_specific_key = f"{field}_{lang}"
-        requested_value = translated_data.get(lang_specific_key)
-
-        # 2. Nếu không có giá trị, quay lại sử dụng ngôn ngữ còn lại
-        if requested_value is None:
-            other_lang_key = f"{field}_{other_lang}"
-            translated_data[field] = translated_data.get(other_lang_key)
-        else:
-            translated_data[field] = requested_value
-
-        # 3. Dọn dẹp tất cả các trường ngôn ngữ gốc để tránh bị lẫn lộn
-        vi_key = f"{field}_vi"
-        if vi_key in translated_data:
-            del translated_data[vi_key]
-
-        en_key = f"{field}_en"
-        if en_key in translated_data:
-            del translated_data[en_key]
-    
-    return translated_data
-
 @router.get("/longanh")
 async def serve_index():
     """
@@ -135,30 +93,52 @@ async def serve_index():
         return JSONResponse(status_code=404, content={"message": "longanh.html not found"})
     return FileResponse(html_file_path)
 
-@router.get("/", response_model=EcoparksPublic)
+@router.get("/", response_model=Dict[str, Any])
 def get_all_ecopark_records(
     session: SessionDep,
+    request: Request,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, le=100),
     lang: str = Query("en", regex="^(vi|en)$", description="Mã ngôn ngữ ('vi' hoặc 'en')"),
 ) -> Any:
-    # 1. Lấy dữ liệu từ database bằng hàm CRUD
-    ecopark_records = crud.get_all_ecopark(session=session, skip=skip, limit=limit)
+    """
+    Retrieves all Ecopark records, applies language translation, and returns a dictionary-based response.
+    """
+    results = crud.get_all_ecopark(session=session, skip=skip, limit=limit)
     
-    # 2. Lấy tổng số lượng bản ghi
-    total_count = crud.get_ecopark_count(session=session)
+    # 2. Prepare the list for the response items
+    items_for_response = []
     
-    # 3. Áp dụng dịch thuật và chuyển đổi model
-    translated_ecoparks = []
-    for record in ecopark_records:
-        record_dict = record.model_dump()
-        translated_dict = translate_ecopark_item(record_dict, lang)
+    # 3. Apply the same manual translation logic as the amenity search API
+    for r in results:
+        # Convert the SQLModel object to a dictionary
+        translated_item = r.model_dump()
         
-        # Chuyển đổi từ dictionary đã dịch sang một đối tượng EcoparkPublic
-        translated_ecoparks.append(EcoparkPublic.model_validate(translated_dict))
+        # Apply the specific translation logic
+        translated_item['zone_name'] = translated_item.get(f'zone_name_{lang}')
+        translated_item['building_type'] = translated_item.get(f'building_type_{lang}')
+        translated_item['amenity_type'] = translated_item.get(f'amenity_type_{lang}')
+        translated_item['direction'] = translated_item.get(f'direction_{lang}')
+        translated_item['status'] = translated_item.get(f'status_{lang}')
+        translated_item['description'] = translated_item.get(f'description_{lang}')
+        
+        # Clean up the original language-specific fields
+        # Creating a copy of keys to avoid RuntimeError
+        for key in list(translated_item.keys()):
+            if key.endswith('_vi') or key.endswith('_en'):
+                del translated_item[key]
 
-    # 4. Trả về đối tượng đúng định dạng EcoparksPublic
-    return EcoparksPublic(data=translated_ecoparks, count=total_count)
+        # Validate and append the item
+        items_for_response.append(translated_item) 
+
+    # 4. Construct the final dictionary response
+    # This matches the structure of your amenity search API
+    image_url = f"{str(request.base_url).rstrip('/')}/static/EcoRetreat/he_thong_tien_ich.png"
+    
+    return {
+        "items": items_for_response, 
+        "count": len(items_for_response) # Adding count for consistency
+    }
 
 @router.post("/{project_id}/upload", response_model=dict, dependencies=[Depends(get_current_active_superuser)],)
 def upload_excel(
