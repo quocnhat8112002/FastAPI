@@ -98,7 +98,7 @@ def get_all_ecopark_records(
     session: SessionDep,
     request: Request,
     skip: int = Query(0, ge=0),
-    limit: int = Query(100, le=100),
+    limit: int = Query(100, ge=1),
     lang: str = Query("en", regex="^(vi|en)$", description="Mã ngôn ngữ ('vi' hoặc 'en')"),
 ) -> Any:
     """
