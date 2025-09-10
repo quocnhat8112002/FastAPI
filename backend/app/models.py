@@ -235,10 +235,8 @@ class RequestPublic(SQLModel):
     requester_id: uuid.UUID
     approver_id: Optional[uuid.UUID] = None
     status: RequestStatus
-    request_message_vi: Optional[str] = None
-    request_message_en: Optional[str] = None
-    response_message_vi: Optional[str] = None
-    response_message_en: Optional[str] = None
+    request_message: Optional[str] = None
+    response_message: Optional[str] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
 

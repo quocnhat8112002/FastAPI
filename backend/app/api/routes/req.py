@@ -11,6 +11,7 @@ from app.models import (
     RequestCreate,
     RequestUpdate,
     RequestPublic,
+    RequestsPublic,
     Role,
     UserProjectRoleCreate
 )
@@ -87,9 +88,10 @@ def get_request_by_id(
             detail="Không tìm thấy yêu cầu này hoặc bạn không có quyền xem."
         )
     request_dict = request_obj.model_dump()
-    return translate_request_item(request_dict, lang)
+    translated = translate_request_item(request_dict, lang)
+    return RequestPublic.model_validate(translated)
 
-@router.get("/", response_model=RequestPublic)
+@router.get("/", response_model=RequestsPublic)
 def get_requests_by_project(
     session: SessionDep,
     project_info: ProjectAccessInfo,
@@ -111,7 +113,13 @@ def get_requests_by_project(
         total = session.exec(
             select(Request.id).where(Request.project_id == project_id)
         ).all()
-        return RequestPublic(data=requests, count=len(total))
+        total_count = len(total)
+
+        translated_requests = [
+            RequestPublic.model_validate(translate_request_item(req.model_dump(), lang))
+            for req in requests
+        ]
+        return RequestsPublic(data=translated_requests, count=total_count)
 
     stmt = (
         select(Request)
@@ -133,18 +141,18 @@ def get_requests_by_project(
         )
     ).all()
 
-    translated_requests = []
-    for req_obj in requests:
-        req_dict = req_obj.model_dump() 
-        translated_req_dict = translate_request_item(req_dict, lang)
-        translated_requests.append(translated_req_dict)
+    total_count = len(total)
 
-    return RequestPublic(data=translated_requests, count=total)
+    translated_requests = [
+        translate_request_item(req.model_dump(), lang) for req in requests
+    ]
+
+    return RequestsPublic(data=translated_requests, count=total_count)
 
 # 2. ✅ POST - tạo request (chỉ được yêu cầu role có rank >= 3)
 @router.post(
     "/{project_id}",
-    response_model=RequestPublic,
+    response_model=RequestsPublic,
     status_code=status.HTTP_201_CREATED,
     dependencies=[
         Depends(verify_system_rank_in([1, 2])) # Phân biệt user có quyền yêu cầu với user thường
@@ -167,15 +175,26 @@ def create_request(
             status_code=403,
             detail="Chỉ được yêu cầu các vai trò có rank >= 3 (thấp quyền hơn)",
         )
+    request_dict = request_data.model_dump()
+
+    msg = request_dict.pop("request_message", None)
+    if msg:
+        if lang == "vi":
+            request_dict["request_message_vi"] = msg
+        else:
+            request_dict["request_message_en"] = msg
+
     created_request_obj = crud.create_request(
         session=session,
-        request_in=request_data,
+        request_in=request_dict,       
         requester_id=current_user.id,
-        project_id=project_id  
+        project_id=project_id
     )
 
-    translated_created_request_dict = translate_request_item(created_request_obj.model_dump(), lang)
-    return RequestPublic(data=[translated_created_request_dict], count=1)
+    request_dict = created_request_obj.model_dump()
+    translated = translate_request_item(request_dict, lang)
+
+    return RequestsPublic(data=[RequestPublic(**translated)], count=1)
 
 # 3. ✅ PUT - cập nhật trạng thái (chỉ xử lý nếu request có rank < mình)
 @router.put(
