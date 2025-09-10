@@ -1,6 +1,9 @@
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime
+from zoneinfo import ZoneInfo
+
+VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
 from fastapi import HTTPException
 from sqlalchemy import  func
@@ -206,14 +209,15 @@ def create_request(
     requester_id: uuid.UUID,
     project_id: uuid.UUID  
 ) -> Request:
+    now = datetime.now(VN_TZ)
     db_request = Request.model_validate(
         request_in,
         update={
             "requester_id": requester_id,
             "project_id": project_id, 
             "status": "pending",
-            "created_at": datetime.utcnow(),
-            "updated_at": datetime.utcnow(),
+            "created_at": now,
+            "updated_at": now,
         },
     )
     session.add(db_request)
@@ -230,7 +234,7 @@ def update_request(
 ) -> Request:
     update_data = request_in.model_dump(exclude_unset=True)
     update_data["approver_id"] = approver_id
-    update_data["updated_at"] = datetime.utcnow()
+    update_data["updated_at"] = datetime.now(VN_TZ)
     if "response_message" not in update_data:
         update_data["response_message"] = db_request.response_message
 
