@@ -65,10 +65,9 @@ def recover_password(email: str, session: SessionDep, request: Request) -> Messa
         )
     password_reset_token = generate_password_reset_token(email=email)
     email_data = generate_reset_password_email(
-        email_to=user.email, email=email, token=password_reset_token
+        request=request, email_to=user.email, email=email, token=password_reset_token
     )
     send_email(
-        request=request, 
         email_to=user.email,
         subject=email_data.subject,
         html_content=email_data.html_content,
