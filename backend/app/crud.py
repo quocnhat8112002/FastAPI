@@ -1,9 +1,7 @@
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime
-from zoneinfo import ZoneInfo
-
-VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
+import pytz
 
 from fastapi import HTTPException
 from sqlalchemy import  func
@@ -23,6 +21,11 @@ from app.models import (
     ProvinceCreate, ProvinceUpdate, ProvinceList,
     WardCreate, WardUpdate, WardList
 )
+
+VN_TZ = pytz.timezone("Asia/Ho_Chi_Minh")
+
+def now_vn():
+    return datetime.now(VN_TZ)
 
 # ========== USER CRUD ==========
 
@@ -216,8 +219,8 @@ def create_request(
             "requester_id": requester_id,
             "project_id": project_id, 
             "status": "pending",
-            "created_at": now,
-            "updated_at": now,
+            "created_at": now_vn(),
+            "updated_at": now_vn(),
         },
     )
     session.add(db_request)
@@ -234,7 +237,7 @@ def update_request(
 ) -> Request:
     update_data = request_in.model_dump(exclude_unset=True)
     update_data["approver_id"] = approver_id
-    update_data["updated_at"] = datetime.now(VN_TZ)
+    update_data["updated_at"] = now_vn()
     if "response_message" not in update_data:
         update_data["response_message"] = db_request.response_message
 

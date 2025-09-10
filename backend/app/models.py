@@ -8,9 +8,11 @@ from typing import List, Optional
 from pydantic import BaseModel, EmailStr
 from sqlmodel import BigInteger, SQLModel, Field
 
-from zoneinfo import ZoneInfo
+import pytz
 
-VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
+VN_TZ = pytz.timezone("Asia/Ho_Chi_Minh")
+def now_vn():
+    return datetime.now(VN_TZ)
 
 # === USER ===
 
@@ -216,7 +218,7 @@ class Request(SQLModel, table=True):
     request_message_en: Optional[str] = None
     response_message_vi: Optional[str] = None
     response_message_en: Optional[str] = None
-    created_at: datetime = Field(default_factory=lambda: datetime.now(VN_TZ))
+    created_at: datetime = Field(default_factory=now_vn)
     updated_at: Optional[datetime] = None
 
 
