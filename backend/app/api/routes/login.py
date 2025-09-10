@@ -1,7 +1,7 @@
 from datetime import timedelta
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.security import OAuth2PasswordRequestForm
 
@@ -52,7 +52,7 @@ def test_token(current_user: CurrentUser) -> Any:
 
 
 @router.post("/password-recovery/{email}")
-def recover_password(email: str, session: SessionDep) -> Message:
+def recover_password(email: str, session: SessionDep, request: Request) -> Message:
     """
     Password Recovery
     """
@@ -68,6 +68,7 @@ def recover_password(email: str, session: SessionDep) -> Message:
         email_to=user.email, email=email, token=password_reset_token
     )
     send_email(
+        request=request, 
         email_to=user.email,
         subject=email_data.subject,
         html_content=email_data.html_content,
