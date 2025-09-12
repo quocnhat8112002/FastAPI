@@ -230,8 +230,7 @@ class RequestCreate(SQLModel):
 class RequestUpdate(SQLModel):
     status: Optional[RequestStatus] = None
     response_message: Optional[str] = None
-    approver_id: Optional[uuid.UUID] = None
-
+    
 
 class RequestPublic(SQLModel):
     id: uuid.UUID

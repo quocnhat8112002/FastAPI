@@ -232,14 +232,12 @@ def update_request(
     *,
     session: Session,
     db_request: Request,
-    request_in: RequestUpdate,
+    request_in: dict,
     approver_id: uuid.UUID
 ) -> Request:
-    update_data = request_in.model_dump(exclude_unset=True)
+    update_data = request_in
     update_data["approver_id"] = approver_id
     update_data["updated_at"] = now_vn()
-    if "response_message" not in update_data:
-        update_data["response_message"] = db_request.response_message
 
     db_request.sqlmodel_update(update_data)
     session.add(db_request)

@@ -154,9 +154,7 @@ def get_requests_by_project(
     "/{project_id}",
     response_model=RequestsPublic,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[
-        Depends(verify_system_rank_in([1, 2])) # Phân biệt user có quyền yêu cầu với user thường
-    ],
+    
 )
 def create_request(
     project_id: UUID,
@@ -199,7 +197,7 @@ def create_request(
 # 3. ✅ PUT - cập nhật trạng thái (chỉ xử lý nếu request có rank < mình)
 @router.put(
     "/{project_id}/{request_id}",
-    response_model=RequestPublic,
+    response_model=RequestsPublic,
     dependencies=[Depends(get_current_active_user)],
 )
 def update_request_status(
@@ -228,44 +226,28 @@ def update_request_status(
             status_code=403,
             detail="Chỉ được duyệt request có rank thấp hơn bạn",
         )
-    # Tùy chọn: Nếu không truyền message, tạo thông điệp mặc định
-    if not update_data.response_message_vi and not update_data.response_message_en:
-        if update_data.status == "approved":
-            update_data.response_message_vi = "Yêu cầu đã được duyệt"
-            update_data.response_message_en = "Request has been approved"
-        else: # "rejected"
-            update_data.response_message_vi = "Yêu cầu bị từ chối"
-            update_data.response_message_en = "Request has been rejected"
+    update_dict = update_data.model_dump(exclude_unset=True)
 
-    updated = crud.update_request(
+    msg = update_dict.pop("response_message", None)
+    if msg:
+        if lang == "vi":
+            update_dict["response_message_vi"] = msg
+        else:
+            update_dict["response_message_en"] = msg
+
+    # Gọi CRUD update
+    updated_request = crud.update_request(
         session=session,
         db_request=db_request,
-        request_in=update_data,
+        request_in=update_dict,
         approver_id=current_user.id,
     )
 
-    # Nếu đồng ý → cập nhật UserProjectRole
-    if update_data.status == "approved":
-        existing = crud.get_user_project_role_by_user_project(
-            session=session,
-            user_id=updated.requester_id,
-            project_id=project_id,
-        )
-        if existing:
-            crud.delete_user_project_role(session=session, db_upr=existing)
+    # Convert sang dict để translate
+    request_dict = updated_request.model_dump()
+    translated = translate_request_item(request_dict, lang)
 
-        crud.add_user_to_project_role(
-            session=session,
-            user_project_role_in=UserProjectRoleCreate(
-                user_id=updated.requester_id,
-                project_id=project_id,
-                role_id=updated.role_id,
-            )
-        )
-
-    translated_updated_request_dict = translate_request_item(updated.model_dump(), lang)
-
-    return RequestPublic(data=[translated_updated_request_dict], count=1)
+    return RequestsPublic(data=[RequestPublic(**translated)], count=1)
 
 
 # 4. ✅ DELETE - chỉ admin được phép xoá request
